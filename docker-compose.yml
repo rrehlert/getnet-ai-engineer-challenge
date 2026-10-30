@@ -1,0 +1,17 @@
+services:
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: ${PORT:-8000}
+      JUDGE_ENABLED: ${JUDGE_ENABLED:-true}
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", \"8000\")}/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
