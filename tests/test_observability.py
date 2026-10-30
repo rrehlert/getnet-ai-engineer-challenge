@@ -108,3 +108,20 @@ def test_route_judge_uses_the_routers_intent_policy():
 
     assert INTENT_POLICY in system
     assert "cliente1988" in human
+
+
+def test_request_log_line_when_index_is_not_ready(caplog):
+    import threading
+
+    caplog.set_level(logging.INFO)
+    release = threading.Event()
+    app = create_app(load_index=lambda: release.wait(5))
+    with TestClient(app) as client:
+        body = post(client).json()
+        release.set()
+        app.state.index_thread.join(5)
+
+    [(_, line)] = lines(caplog, "request")
+    assert line["trace_id"] == body["trace_id"]
+    assert line["outcome"] == "starting"
+    assert line["intent"] is None

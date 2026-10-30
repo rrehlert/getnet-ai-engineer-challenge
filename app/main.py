@@ -156,6 +156,7 @@ def create_app(
             )
 
         if not ready():
+            log_outcome("starting")
             return _error(503, "starting", "The service is starting; try again shortly.", trace_id)
         try:
             if app.state.graph is None:
