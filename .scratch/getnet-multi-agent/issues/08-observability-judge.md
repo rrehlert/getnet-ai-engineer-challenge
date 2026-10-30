@@ -1,6 +1,6 @@
 # 08: Request log line and Judges (B4)
 
-Status: ready-for-agent
+Status: closed
 Blocked by: 07
 
 - One JSON log line per request with the spec's fields (tokens summed from `usage_metadata`).
