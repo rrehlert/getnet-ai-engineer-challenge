@@ -1,6 +1,6 @@
 # 05: RAG index and Knowledge Agent
 
-Status: ready-for-agent
+Status: closed
 Blocked by: 03, 04
 
 - Index: splitter 300/50 with title prefix, fastembed multilingual MiniLM, persistent Chroma with cosine, hash-named collection, built at startup (lifespan); `/health` waits for it.
