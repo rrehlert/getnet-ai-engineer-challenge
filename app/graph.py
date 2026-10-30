@@ -32,13 +32,30 @@ class GraphState(TypedDict):
 
 Node = Callable[[GraphState], dict]
 
+EMPTY_ANSWER_FALLBACK = (
+    "Não consegui gerar uma resposta. Por favor, reformule sua pergunta. "
+    "I couldn't produce an answer. Please rephrase your question."
+)
+
+
+def _never_empty(specialist: Node) -> Node:
+    """A specialist that returned no answer text gets the fixed fallback instead."""
+
+    def node(state: GraphState) -> dict:
+        update = specialist(state)
+        if not (update.get("answer") or "").strip():
+            update = {**update, "answer": EMPTY_ANSWER_FALLBACK}
+        return update
+
+    return node
+
 
 def build_graph(route_fn: Node, knowledge: Node, support: Node):
     """Compile the graph. Inject fakes for any node in tests."""
     builder = StateGraph(GraphState)
     builder.add_node("router", route_fn)
-    builder.add_node("knowledge", knowledge)
-    builder.add_node("support", support)
+    builder.add_node("knowledge", _never_empty(knowledge))
+    builder.add_node("support", _never_empty(support))
 
     builder.add_edge(START, "router")
     builder.add_conditional_edges(
