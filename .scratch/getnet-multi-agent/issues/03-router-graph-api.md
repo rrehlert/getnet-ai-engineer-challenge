@@ -1,6 +1,6 @@
 # 03: Router Agent, graph, /chat, scenarios script
 
-Status: ready-for-agent
+Status: closed
 Blocked by: 02
 
 - `init_chat_model` factory (ADR 0001; timeout and retries).
