@@ -1,0 +1,65 @@
+# Getnet Multi-Agent Support
+
+A support assistant for Getnet merchants. It answers product questions from Getnet's public content and account questions from the merchant's own data.
+
+## Conversation
+
+**Message**:
+One piece of text a Merchant sends, together with their user id. Handled independently; there is no conversation history.
+_Avoid_: Query, prompt, request
+
+**Merchant**:
+A Getnet customer business, identified by a user id (e.g. `cliente1988`), that owns Terminals and receives Settlements. The Merchant is always the one named by the request's user id. Text inside a Message never changes who the Merchant is.
+_Avoid_: User, client, customer, lojista
+
+**Intent**:
+The Router Agent's classification of a Message: `knowledge`, `support`, or `unsupported`.
+_Avoid_: Category, route, topic
+
+## Agents
+
+**Router Agent**:
+The entry point. It assigns each Message an Intent and either hands it to a specialist or refuses it itself when it is unsupported.
+_Avoid_: Orchestrator, classifier, supervisor
+
+**Knowledge Agent**:
+The specialist for general questions: Getnet products and services (from the Corpus) and general facts such as weather or exchange rates (from web search).
+_Avoid_: RAG agent, FAQ agent, search agent
+
+**Customer Support Agent**:
+The specialist for questions about the Merchant's own account, such as Settlements, Terminals and recent transactions.
+_Avoid_: Support bot, account agent, helpdesk
+
+## Knowledge
+
+**Corpus**:
+The set of Getnet web pages, saved as text, that the Knowledge Agent can search.
+_Avoid_: Knowledge base, dataset, documents
+
+**Chunk**:
+A short passage of a Corpus page, labelled with that page's title. It is the unit that retrieval returns.
+_Avoid_: Passage, snippet, document
+
+**Source**:
+A page (URL and title) that a retrieval or web search tool actually returned and that supports an answer. Sources are never taken from model-written text.
+_Avoid_: Citation, reference, link
+
+## Merchant account
+
+**Settlement**:
+A scheduled deposit of a Merchant's sales proceeds into their account, with an expected date, amount and status.
+_Avoid_: Payout, deposit, repasse, liquidação
+
+**Terminal**:
+A Getnet card machine (POS) owned by a Merchant.
+_Avoid_: Machine, POS, maquininha, device
+
+## Quality
+
+**Judge Type**:
+The aspect an LLM judge rates after a reply is sent. `route` asks whether the Intent was right. `answer` asks whether the reply is good for that Intent.
+_Avoid_: Judge kind, eval category
+
+**Judge Score**:
+A 0–1 rating of one Message under one Judge Type. A score below 0.7 is flagged.
+_Avoid_: Eval score, rating, confidence
