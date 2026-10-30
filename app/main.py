@@ -128,6 +128,7 @@ def create_app(
             intent=result["intent"],
             answer=result.get("answer", ""),
             sources=result.get("sources", []),
+            user_id=result.get("user_id", ""),
         )
 
     def ready() -> bool:

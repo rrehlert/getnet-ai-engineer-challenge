@@ -96,3 +96,15 @@ def test_judge_failure_is_logged_not_raised(caplog):
 
     assert [j["judge_type"] for _, j in lines(caplog, "judge")] == ["answer"]
     assert any(r.levelno == logging.ERROR and "route" in r.getMessage() for r in caplog.records)
+
+
+def test_route_judge_uses_the_routers_intent_policy():
+    from app.judge import JUDGES
+    from app.router import INTENT_POLICY
+
+    (_, system), (_, human) = JUDGES["route"](
+        message="What's the euro exchange rate today?", intent="knowledge", user_id="cliente1988"
+    )
+
+    assert INTENT_POLICY in system
+    assert "cliente1988" in human
