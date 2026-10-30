@@ -34,7 +34,9 @@ def build_default_graph():
     from app.stubs import stub_knowledge, stub_support
 
     model = make_chat_model(get_settings())
-    return build_graph(make_router(model), stub_knowledge, stub_support)
+    from app.support import make_support
+
+    return build_graph(make_router(model), stub_knowledge, make_support(model))
 
 
 def _error(status: int, code: str, message: str, trace_id: str) -> JSONResponse:

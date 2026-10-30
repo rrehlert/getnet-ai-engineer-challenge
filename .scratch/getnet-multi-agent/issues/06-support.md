@@ -1,6 +1,6 @@
 # 06: Mock data and Customer Support Agent
 
-Status: ready-for-agent
+Status: closed
 Blocked by: 03
 
 - `data/merchants.json` (cliente1988, cliente2024) with day offsets relative to today.
