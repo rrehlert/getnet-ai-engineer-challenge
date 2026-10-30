@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     judge_enabled: bool = False
     # Empty means "same as llm_model".
     judge_model: str = ""
-    relevance_threshold: float = 0.43
+    relevance_threshold: float = 0.5
     port: int = 8000
     # Persistent Chroma index (gitignored; built at startup, not baked into the image).
     chroma_dir: str = "chroma"

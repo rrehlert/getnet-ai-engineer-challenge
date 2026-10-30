@@ -24,7 +24,7 @@ Secrets go in `.env` (gitignored); only `.env.example` is committed.
 | `TAVILY_API_KEY` | empty | optional; falls back to DuckDuckGo when empty |
 | `JUDGE_ENABLED` | `true` (compose) / `false` (tests) | |
 | `JUDGE_MODEL` | = `LLM_MODEL` | |
-| `RELEVANCE_THRESHOLD` | `0.43` | cosine similarity; tune on the scenarios |
+| `RELEVANCE_THRESHOLD` | `0.5` | cosine similarity; tuned on the scenarios (relevant ≥ .58, off-topic ≤ .34) |
 | `PORT` | `8000` | |
 
 Chat model settings: `timeout=30s`, `max_retries=2`.
