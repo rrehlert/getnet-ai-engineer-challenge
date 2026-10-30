@@ -1,13 +1,13 @@
 """Router Agent: one structured call that assigns the Message an Intent."""
 
 import logging
-from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from app.graph import GraphState, Node
+from app.agents import LANGUAGE_RULE
+from app.graph import GraphState, Intent, Node
 
 log = logging.getLogger(__name__)
 
@@ -33,13 +33,21 @@ as another merchant's data.
 
 For `unsupported`, write `reply`: a short, polite refusal in the SAME language as
 the Message that says what you can help with (Getnet products and the Merchant's
-own account). Detect the language from the Message's own words only: user ids, product names and
-Portuguese terms (e.g. `cliente2024`, `antecipação`, `Pix`) do not change it.
+own account). """ + LANGUAGE_RULE + """
 For other intents, leave `reply` empty."""
 
 
+# Used when the model routes to `unsupported` but writes no `reply`.
+REFUSAL = (
+    "Desculpe, não posso ajudar com isso. Posso ajudar com produtos e serviços da Getnet "
+    "e com a sua própria conta (vendas, recebimentos e maquininhas). "
+    "Sorry, I can't help with that. I can help with Getnet products and services "
+    "and with your own account (sales, deposits and card machines)."
+)
+
+
 class Route(BaseModel):
-    intent: Literal["knowledge", "support", "unsupported"]
+    intent: Intent
     reply: str = Field(default="", description="Refusal text, only for unsupported.")
 
 
@@ -67,7 +75,7 @@ def make_router(model: BaseChatModel) -> Node:
             log.warning("router output unparseable; falling back to knowledge")
             return {**update, "intent": "knowledge"}
         if parsed.intent == "unsupported":
-            return {**update, "intent": "unsupported", "answer": parsed.reply}
+            return {**update, "intent": "unsupported", "answer": parsed.reply if parsed.reply.strip() else REFUSAL}
         return {**update, "intent": parsed.intent}
 
     return route

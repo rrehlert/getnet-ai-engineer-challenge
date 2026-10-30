@@ -10,20 +10,25 @@ from datetime import date
 from typing import Any, Protocol
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelRequest, ToolCallLimitMiddleware, dynamic_prompt
+from langchain.agents.middleware import (
+    ModelRequest,
+    ToolCallLimitMiddleware,
+    dynamic_prompt,
+)
 from langchain.tools import BaseTool, tool
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
-from app.graph import GraphState, Node, Source
-from app.rag import Hit, relevant_sources
+from app.agents import LANGUAGE_RULE, run_summary
+from app.graph import GraphState, Node, Source, dedup_sources
+from app.rag import TOP_K, Hit, relevant_sources
 
 log = logging.getLogger(__name__)
 
-TOP_K = 4
-TOOL_CALL_LIMIT = 4
-# Backstop in case the model keeps calling tools after the limit (each call is 2 steps).
-RECURSION_LIMIT = 4 * (TOOL_CALL_LIMIT + 4)
+KNOWLEDGE_TOOL_CALL_LIMIT = 4
+# Backstop if the model keeps calling tools past the limit: ~4 graph steps per round
+# (model, limit hook, tools, slack) for the allowed rounds plus 4 spare rounds.
+KNOWLEDGE_RECURSION_LIMIT = 4 * (KNOWLEDGE_TOOL_CALL_LIMIT + 4)
 
 
 class Index(Protocol):
@@ -126,18 +131,11 @@ Rules:
 - If a search misses, retry once with different Portuguese wording (synonyms,
   the product's name, the FAQ question form) before saying it wasn't found.
 - Reply in the same language as the Merchant's Message, even when tool data is in
-  Portuguese. Detect the language from the Message's own words only: user ids, product names and Portuguese terms (e.g. `cliente2024`, `antecipação`, `Pix`) do not change it. Be concise and practical."""
+  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical."""
 
 
 def build_prompt(today: date) -> str:
     return PROMPT.format(today=today.isoformat(), weekday=today.strftime("%A"))
-
-
-def _dedup(sources: list[Source]) -> list[Source]:
-    seen: dict[str, Source] = {}
-    for s in sources:
-        seen.setdefault(s["url"], {"url": s["url"], "title": s["title"]})
-    return list(seen.values())
 
 
 def make_knowledge(model: BaseChatModel, tools: list[BaseTool], today: Callable[[], date] = date.today) -> Node:
@@ -148,23 +146,21 @@ def make_knowledge(model: BaseChatModel, tools: list[BaseTool], today: Callable[
     agent = create_agent(
         model,
         tools=tools,
-        middleware=[knowledge_prompt, ToolCallLimitMiddleware(run_limit=TOOL_CALL_LIMIT)],
+        middleware=[knowledge_prompt, ToolCallLimitMiddleware(run_limit=KNOWLEDGE_TOOL_CALL_LIMIT)],
     )
 
     def knowledge(state: GraphState) -> dict:
         out = agent.invoke(
             {"messages": [HumanMessage(state["message"])]},
-            config={"recursion_limit": RECURSION_LIMIT},
+            config={"recursion_limit": KNOWLEDGE_RECURSION_LIMIT},
         )
         messages = out["messages"]
-        tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
         return {
             "answer": messages[-1].text,
-            "sources": _dedup([s for m in tool_messages if m.artifact for s in m.artifact]),
-            "steps": ["knowledge"] + [m.name for m in tool_messages],
-            "tokens": sum(
-                (m.usage_metadata or {}).get("total_tokens", 0) for m in messages if isinstance(m, AIMessage)
+            "sources": dedup_sources(
+                s for m in messages if isinstance(m, ToolMessage) and m.artifact for s in m.artifact
             ),
+            **run_summary("knowledge", messages),
         }
 
     return knowledge

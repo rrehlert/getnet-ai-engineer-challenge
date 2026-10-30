@@ -62,3 +62,20 @@ def test_unparseable_router_output_falls_back_to_knowledge_agent():
 
     assert result["intent"] == "knowledge"
     assert result["steps"] == ["router", "knowledge", "knowledge_tool"]
+
+
+def empty_specialist(state):
+    return {"answer": " ", "sources": [], "steps": ["support"], "tokens": 5}
+
+
+def test_specialist_empty_answer_gets_a_fixed_bilingual_fallback():
+    from app.graph import EMPTY_ANSWER_FALLBACK
+
+    for intent in ("knowledge", "support"):
+        graph = build_graph(fake_route(intent), empty_specialist, empty_specialist)
+        result = graph.invoke({"message": "hi", "user_id": "cliente1988"})
+
+        assert result["answer"] == EMPTY_ANSWER_FALLBACK
+        assert result["steps"] == ["router", "support"]
+        assert result["tokens"] == 5
+    assert "reformule" in EMPTY_ANSWER_FALLBACK and "rephrase" in EMPTY_ANSWER_FALLBACK

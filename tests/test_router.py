@@ -74,3 +74,15 @@ def test_router_is_told_who_the_merchant_is_and_gets_the_message():
     text = " ".join(str(m.content) for m in model.seen)
     assert "cliente1988" in text
     assert STATE["message"] in text
+
+
+def test_unsupported_with_empty_reply_gets_a_fixed_bilingual_refusal():
+    from app.router import REFUSAL
+
+    route = make_router(FakeStructuredModel(Route(intent="unsupported", reply="  \n")))
+
+    update = route(STATE)
+
+    assert update["intent"] == "unsupported"
+    assert update["answer"] == REFUSAL
+    assert "Getnet" in REFUSAL and "Desculpe" in REFUSAL and "Sorry" in REFUSAL

@@ -3,10 +3,13 @@
 import json
 import logging
 import sys
+from typing import get_args
+
+from app.graph import Agent, Intent, agent_for
 
 log = logging.getLogger("app.events")
 
-AGENTS = {"router", "knowledge", "support"}
+AGENTS = set(get_args(Agent))
 MESSAGE_LIMIT = 500
 
 
@@ -18,14 +21,14 @@ def log_request(
     *, trace_id: str, user_id: str, message: str, latency_ms: int, outcome: str, result: dict | None = None
 ) -> None:
     result = result or {}
-    intent = result.get("intent")
+    intent: Intent | None = result.get("intent")
     emit(
         "request",
         trace_id=trace_id,
         user_id=user_id,
         message=message[:MESSAGE_LIMIT],
         intent=intent,
-        agent=None if intent is None else ("router" if intent == "unsupported" else intent),
+        agent=None if intent is None else agent_for(intent),
         tools=[s for s in result.get("steps", []) if s not in AGENTS],
         tokens=result.get("tokens", 0),
         latency_ms=latency_ms,

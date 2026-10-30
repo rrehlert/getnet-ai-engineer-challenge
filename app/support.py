@@ -12,13 +12,19 @@ from pathlib import Path
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelRequest, ToolCallLimitMiddleware, dynamic_prompt
+from langchain.agents.middleware import (
+    ModelRequest,
+    ToolCallLimitMiddleware,
+    dynamic_prompt,
+)
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage
 
+from app.agents import LANGUAGE_RULE, run_summary
 from app.graph import GraphState, Node
 
+SUPPORT_TOOL_CALL_LIMIT = 6
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "merchants.json"
 
 
@@ -97,8 +103,7 @@ Rules:
   procedures; for troubleshooting, use the hints in the tool data.
 - Write every amount in Brazilian reais, e.g. R$ 1.817,26.
 - Reply in the same language as the Merchant's Message, even when tool data is in
-  Portuguese. Detect the language from the Message's own words only: user ids, product names and Portuguese terms (e.g. `cliente2024`, `antecipação`, `Pix`) do not change it. Be concise and practical.
-- Always state amounts in R$ when the tool data has them."""
+  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical."""
 
 UNKNOWN_PROMPT = """You are the Customer Support Agent of Getnet's support assistant for merchants.
 Today is {today} ({weekday}).
@@ -141,7 +146,7 @@ def make_support(model: BaseChatModel, today: Callable[[], date] = date.today) -
         return create_agent(
             model,
             tools=tools,
-            middleware=[support_prompt, ToolCallLimitMiddleware(run_limit=6, exit_behavior="end")],
+            middleware=[support_prompt, ToolCallLimitMiddleware(run_limit=SUPPORT_TOOL_CALL_LIMIT, exit_behavior="end")],
             context_schema=SupportContext,
         )
 
@@ -159,15 +164,6 @@ def make_support(model: BaseChatModel, today: Callable[[], date] = date.today) -
         if not known and not answer.strip():
             # The model tried a tool call anyway; reply deterministically.
             answer = NOT_FOUND.format(user_id=ctx.user_id)
-        return {
-            "answer": answer,
-            "sources": [],
-            "steps": ["support"] + [m.name for m in messages if isinstance(m, ToolMessage)],
-            "tokens": sum(
-                (m.usage_metadata or {}).get("total_tokens", 0)
-                for m in messages
-                if isinstance(m, AIMessage)
-            ),
-        }
+        return {"answer": answer, "sources": [], **run_summary("support", messages)}
 
     return support

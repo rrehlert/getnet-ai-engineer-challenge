@@ -7,17 +7,31 @@ accumulated across nodes, so each node returns only its own.
 """
 
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Annotated, Literal, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 Intent = Literal["knowledge", "support", "unsupported"]
+Agent = Literal["router", "knowledge", "support"]
+
+
+def agent_for(intent: Intent) -> Agent:
+    """The Agent that answers an Intent: the Router itself refuses `unsupported`."""
+    return "router" if intent == "unsupported" else intent
 
 
 class Source(TypedDict):
     url: str
     title: str
+
+
+def dedup_sources(sources: Iterable[Source]) -> list[Source]:
+    """Sources once per URL, first occurrence wins, in order."""
+    seen: dict[str, Source] = {}
+    for s in sources:
+        seen.setdefault(s["url"], {"url": s["url"], "title": s["title"]})
+    return list(seen.values())
 
 
 class GraphState(TypedDict):
@@ -32,13 +46,30 @@ class GraphState(TypedDict):
 
 Node = Callable[[GraphState], dict]
 
+EMPTY_ANSWER_FALLBACK = (
+    "Não consegui gerar uma resposta. Por favor, reformule sua pergunta. "
+    "I couldn't produce an answer. Please rephrase your question."
+)
+
+
+def _never_empty(specialist: Node) -> Node:
+    """A specialist that returned no answer text gets the fixed fallback instead."""
+
+    def node(state: GraphState) -> dict:
+        update = specialist(state)
+        if not (update.get("answer") or "").strip():
+            update = {**update, "answer": EMPTY_ANSWER_FALLBACK}
+        return update
+
+    return node
+
 
 def build_graph(route_fn: Node, knowledge: Node, support: Node):
     """Compile the graph. Inject fakes for any node in tests."""
     builder = StateGraph(GraphState)
     builder.add_node("router", route_fn)
-    builder.add_node("knowledge", knowledge)
-    builder.add_node("support", support)
+    builder.add_node("knowledge", _never_empty(knowledge))
+    builder.add_node("support", _never_empty(support))
 
     builder.add_edge(START, "router")
     builder.add_conditional_edges(
