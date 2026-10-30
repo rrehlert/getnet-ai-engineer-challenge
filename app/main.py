@@ -6,13 +6,13 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
-import openai
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.graph import Source, build_graph
 from app.judge import run_judges
+from app.llm import is_provider_error, provider_error_code
 from app.observability import log_request, setup_logging
 
 log = logging.getLogger(__name__)
@@ -163,14 +163,13 @@ def create_app(
             result = app.state.graph.invoke(
                 {"message": request.message, "user_id": request.user_id}
             )
-        except openai.APIError as exc:
-            # Raised only after the SDK's own retries are exhausted.
-            log.warning("provider error trace_id=%s: %r", trace_id, exc)
-            log_outcome("provider_error")
-            if getattr(exc, "status_code", None) == 429:
-                return _error(503, "rate_limited", "The language model is rate limited; try again shortly.", trace_id)
-            return _error(503, "provider_unavailable", "The language model provider is unavailable; try again shortly.", trace_id)
-        except Exception:
+        except Exception as exc:
+            if is_provider_error(exc):
+                log.warning("provider error trace_id=%s: %r", trace_id, exc)
+                log_outcome("provider_error")
+                if provider_error_code(exc) == "rate_limited":
+                    return _error(503, "rate_limited", "The language model is rate limited; try again shortly.", trace_id)
+                return _error(503, "provider_unavailable", "The language model provider is unavailable; try again shortly.", trace_id)
             log.exception("unexpected error trace_id=%s", trace_id)
             log_outcome("error")
             return _error(500, "internal_error", "Internal server error.", trace_id)

@@ -116,3 +116,56 @@ def test_unexpected_error_is_generic_500_without_details():
     assert "secret internal detail" not in response.text
     assert body["error"]["code"] == "internal_error"
     assert body["trace_id"]
+
+
+class FakeAnthropicRateLimitError(Exception):
+    """A non-openai provider SDK error: only its name and status say what it is."""
+
+    status_code = 429
+
+
+class FakeOverloadedError(Exception):
+    pass
+
+
+class FakeGoogleError(Exception):
+    def __init__(self, status):
+        super().__init__(f"status {status}")
+        self.status = status
+
+
+def wrapped(cause):
+    try:
+        raise cause
+    except Exception as inner:
+        try:
+            raise RuntimeError("graph node failed") from inner
+        except RuntimeError as outer:
+            return outer
+
+
+@pytest.mark.parametrize(
+    ("exc", "code"),
+    [
+        (FakeAnthropicRateLimitError("slow down"), "rate_limited"),
+        (FakeOverloadedError("overloaded"), "provider_unavailable"),
+        (FakeGoogleError(503), "provider_unavailable"),
+        (httpx.ReadTimeout("timed out"), "provider_unavailable"),
+        (httpx.ConnectError("refused"), "provider_unavailable"),
+        (wrapped(FakeGoogleError(429)), "rate_limited"),
+        (wrapped(FakeGoogleError(500)), "provider_unavailable"),
+    ],
+)
+def test_any_providers_errors_are_503(exc, code):
+    response = post(client_for(raising(exc)))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == code
+
+
+@pytest.mark.parametrize("exc", [FakeGoogleError(400), wrapped(ValueError("bad")), KeyError("intent")])
+def test_non_provider_errors_stay_500(exc):
+    response = post(client_for(raising(exc)))
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
