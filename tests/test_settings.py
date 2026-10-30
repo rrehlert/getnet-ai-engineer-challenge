@@ -11,6 +11,7 @@ ENV_VARS = [
     "JUDGE_MODEL",
     "RELEVANCE_THRESHOLD",
     "PORT",
+    "CHROMA_DIR",
 ]
 
 
@@ -32,6 +33,7 @@ def test_defaults_match_spec(clean_env):
     assert settings.judge_model == "openai:openai/gpt-6-luna"
     assert settings.relevance_threshold == 0.43
     assert settings.port == 8000
+    assert settings.chroma_dir == "chroma"
 
 
 def test_judge_model_follows_llm_model_when_unset(clean_env):

@@ -1,5 +1,8 @@
 import logging
+import threading
 import uuid
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 import openai
@@ -26,17 +29,29 @@ class ChatResponse(BaseModel):
     trace_id: str
 
 
-def build_default_graph():
-    """The production graph: real Router, specialists (stubs until 05/06)."""
+def load_default_index():
+    """Open (or build) the Corpus index. Needs no LLM key."""
+    from app.rag import FastEmbedder, build_index
+    from app.settings import get_settings
+
+    return build_index(get_settings().chroma_dir, FastEmbedder())
+
+
+def build_default_graph(index):
+    """The production graph: Router, Knowledge and Customer Support Agents."""
+    from app.knowledge import default_web_search, make_knowledge, make_search_corpus
     from app.llm import make_chat_model
     from app.router import make_router
     from app.settings import get_settings
-    from app.stubs import stub_knowledge, stub_support
-
-    model = make_chat_model(get_settings())
     from app.support import make_support
 
-    return build_graph(make_router(model), stub_knowledge, make_support(model))
+    settings = get_settings()
+    model = make_chat_model(settings)
+    tools = [
+        make_search_corpus(index, settings.relevance_threshold),
+        default_web_search(settings.tavily_api_key),
+    ]
+    return build_graph(make_router(model), make_knowledge(model, tools), make_support(model))
 
 
 def _error(status: int, code: str, message: str, trace_id: str) -> JSONResponse:
@@ -46,21 +61,49 @@ def _error(status: int, code: str, message: str, trace_id: str) -> JSONResponse:
     )
 
 
-def create_app(graph: Any = None) -> FastAPI:
-    """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted."""
-    app = FastAPI(title="Getnet Multi-Agent Support")
+def create_app(graph: Any = None, load_index: Callable[[], Any] | None = None) -> FastAPI:
+    """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted.
+
+    `load_index` runs in a background thread at startup; until it returns,
+    `/health` and `/chat` answer 503. Without it there is no index to wait for.
+    """
+
+    def _load() -> None:
+        try:
+            app.state.index = load_index()
+            log.info("corpus index ready")
+        except Exception:
+            log.exception("corpus index failed to build")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if load_index is not None:
+            app.state.index_thread = threading.Thread(target=_load, name="index", daemon=True)
+            app.state.index_thread.start()
+        yield
+
+    app = FastAPI(title="Getnet Multi-Agent Support", lifespan=lifespan)
     app.state.graph = graph
+    app.state.index = None
+    app.state.needs_index = load_index is not None
+
+    def ready() -> bool:
+        return not app.state.needs_index or app.state.index is not None
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def health():
+        if not ready():
+            return JSONResponse(status_code=503, content={"status": "starting"})
         return {"status": "ok"}
 
     @app.post("/chat", response_model=ChatResponse)
     def chat(request: ChatRequest):
         trace_id = uuid.uuid4().hex
+        if not ready():
+            return _error(503, "starting", "The service is starting; try again shortly.", trace_id)
         try:
             if app.state.graph is None:
-                app.state.graph = build_default_graph()
+                app.state.graph = build_default_graph(app.state.index)
             result = app.state.graph.invoke(
                 {"message": request.message, "user_id": request.user_id}
             )
@@ -87,4 +130,4 @@ def create_app(graph: Any = None) -> FastAPI:
     return app
 
 
-app = create_app()
+app = create_app(load_index=load_default_index)
