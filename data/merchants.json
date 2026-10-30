@@ -1,0 +1,108 @@
+{
+  "_comment": "Mock Merchant accounts. Every *_day_offset is days relative to today (-1 = yesterday) and is resolved to an ISO *_date at read time. Amounts are BRL; settlements are precomputed (no fee logic in code).",
+  "cliente1988": {
+    "profile": {
+      "business_name": "Padaria Pão Dourado",
+      "segment": "bakery",
+      "city": "São Paulo - SP",
+      "settlement_plan": "standard: debit and Pix D+1, credit D+30 (calendar days)",
+      "bank_account": "Banco Santander, agência 0123, conta ****4521-7",
+      "terminals": 2
+    },
+    "settlements": [
+      {"sale_day_offset": -2, "payment_method": "debit", "transactions": 61, "gross_amount": 1735.40, "fee_amount": 23.77, "net_amount": 1711.63, "expected_day_offset": -1, "status": "paid", "paid_day_offset": -1},
+      {"sale_day_offset": -2, "payment_method": "pix", "transactions": 38, "gross_amount": 812.00, "fee_amount": 4.06, "net_amount": 807.94, "expected_day_offset": -1, "status": "paid", "paid_day_offset": -1},
+      {"sale_day_offset": -1, "payment_method": "debit", "transactions": 64, "gross_amount": 1842.50, "fee_amount": 25.24, "net_amount": 1817.26, "expected_day_offset": 0, "status": "scheduled", "note": "Credited to the bank account by end of day."},
+      {"sale_day_offset": -1, "payment_method": "pix", "transactions": 41, "gross_amount": 960.00, "fee_amount": 4.80, "net_amount": 955.20, "expected_day_offset": 0, "status": "scheduled", "note": "Credited to the bank account by end of day."},
+      {"sale_day_offset": -1, "payment_method": "credit (1x)", "transactions": 37, "gross_amount": 2315.90, "fee_amount": 69.25, "net_amount": 2246.65, "expected_day_offset": 29, "status": "scheduled", "note": "Standard D+30 for credit; can be brought forward with a receivables advance."},
+      {"sale_day_offset": -2, "payment_method": "credit (1x)", "transactions": 33, "gross_amount": 2048.30, "fee_amount": 61.24, "net_amount": 1987.06, "expected_day_offset": 28, "status": "scheduled"}
+    ],
+    "terminals": [
+      {
+        "serial": "GT-58A1-0093",
+        "model": "Getnet POS Smart (Android)",
+        "nickname": "Caixa 1",
+        "status": "offline",
+        "connection_type": "wifi",
+        "wifi_network": "PaoDourado_2G",
+        "wifi_signal": "weak (1 of 4 bars) at last check-in",
+        "sim_chip": "Vivo data chip installed, mobile data fallback disabled",
+        "last_seen_day_offset": -1,
+        "last_seen_time": "18:42",
+        "battery": "12%, not charging at last check-in",
+        "firmware": "4.12.0 (up to date)",
+        "last_error": "NETWORK_UNREACHABLE: could not reach the Getnet host over Wi-Fi",
+        "troubleshooting_hints": [
+          "Check that the router is on and that the PaoDourado_2G network is working on another device.",
+          "Move the terminal closer to the router; it only supports 2.4 GHz Wi-Fi networks.",
+          "If the Wi-Fi password changed, reconnect in Settings > Wi-Fi on the terminal.",
+          "Enable the mobile data chip as fallback in Settings > Connections > Chip so sales continue if Wi-Fi drops.",
+          "Charge the battery and restart the terminal (hold the power button for 10 seconds)."
+        ]
+      },
+      {
+        "serial": "GT-58A1-0117",
+        "model": "Getnet POS Smart (Android)",
+        "nickname": "Caixa 2",
+        "status": "online",
+        "connection_type": "sim_chip",
+        "sim_chip": "Vivo data chip, signal good (3 of 4 bars)",
+        "last_seen_day_offset": 0,
+        "last_seen_time": "08:55",
+        "battery": "86%",
+        "firmware": "4.12.0 (up to date)",
+        "last_error": null,
+        "troubleshooting_hints": []
+      }
+    ],
+    "transactions": [
+      {"day_offset": -1, "time": "19:12", "terminal": "GT-58A1-0117", "payment_method": "credit (1x)", "card_brand": "Mastercard", "card_last4": "4410", "amount": 42.90, "status": "approved", "authorization_code": "A83K21"},
+      {"day_offset": -1, "time": "18:31", "terminal": "GT-58A1-0093", "payment_method": "debit", "card_brand": "Visa", "card_last4": "9087", "amount": 18.50, "status": "approved", "authorization_code": "B11P07"},
+      {"day_offset": -1, "time": "17:48", "terminal": "GT-58A1-0117", "payment_method": "debit", "card_brand": "Elo", "card_last4": "2231", "amount": 63.20, "status": "declined", "decline_code": "51", "decline_reason": "insufficient funds", "hint": "Issuer decision, not a terminal problem: ask the customer for another card or Pix."},
+      {"day_offset": -1, "time": "16:05", "terminal": "GT-58A1-0093", "payment_method": "credit (1x)", "card_brand": "Visa", "card_last4": "5512", "amount": 127.00, "status": "declined", "decline_code": "54", "decline_reason": "expired card", "hint": "The card is past its expiry date: ask the customer for a valid card or Pix."},
+      {"day_offset": -1, "time": "12:20", "terminal": "GT-58A1-0093", "payment_method": "pix", "amount": 35.00, "status": "approved", "authorization_code": "PIX-7F2C9A"},
+      {"day_offset": 0, "time": "08:57", "terminal": "GT-58A1-0117", "payment_method": "debit", "card_brand": "Mastercard", "card_last4": "7730", "amount": 24.80, "status": "declined", "decline_code": "51", "decline_reason": "insufficient funds", "hint": "Issuer decision, not a terminal problem: ask the customer for another card or Pix."},
+      {"day_offset": 0, "time": "09:03", "terminal": "GT-58A1-0117", "payment_method": "debit", "card_brand": "Mastercard", "card_last4": "7730", "amount": 24.80, "status": "approved", "authorization_code": "C55Q90"}
+    ]
+  },
+  "cliente2024": {
+    "profile": {
+      "business_name": "Livraria Página Viva",
+      "segment": "bookstore",
+      "city": "Curitiba - PR",
+      "settlement_plan": "same-day settlement (D+0) for debit, Pix and credit, via automatic receivables advance",
+      "bank_account": "Banco do Brasil, agência 3344, conta ****0098-2",
+      "terminals": 1
+    },
+    "settlements": [
+      {"sale_day_offset": -2, "payment_method": "debit", "transactions": 22, "gross_amount": 980.40, "fee_amount": 17.65, "net_amount": 962.75, "expected_day_offset": -2, "status": "paid", "paid_day_offset": -2},
+      {"sale_day_offset": -2, "payment_method": "credit (1x)", "transactions": 15, "gross_amount": 1420.00, "fee_amount": 56.80, "net_amount": 1363.20, "expected_day_offset": -2, "status": "paid", "paid_day_offset": -2},
+      {"sale_day_offset": -1, "payment_method": "debit", "transactions": 19, "gross_amount": 845.60, "fee_amount": 15.22, "net_amount": 830.38, "expected_day_offset": -1, "status": "paid", "paid_day_offset": -1},
+      {"sale_day_offset": -1, "payment_method": "pix", "transactions": 12, "gross_amount": 410.00, "fee_amount": 0.00, "net_amount": 410.00, "expected_day_offset": -1, "status": "paid", "paid_day_offset": -1},
+      {"sale_day_offset": -1, "payment_method": "credit (1x)", "transactions": 17, "gross_amount": 1655.30, "fee_amount": 66.21, "net_amount": 1589.09, "expected_day_offset": -1, "status": "paid", "paid_day_offset": -1}
+    ],
+    "terminals": [
+      {
+        "serial": "GT-77C3-0451",
+        "model": "Getnet POS Smart (Android)",
+        "nickname": "Balcão",
+        "status": "online",
+        "connection_type": "wifi",
+        "wifi_network": "PaginaViva_Loja",
+        "wifi_signal": "strong (4 of 4 bars)",
+        "sim_chip": "Claro data chip installed, mobile data fallback enabled",
+        "last_seen_day_offset": 0,
+        "last_seen_time": "09:10",
+        "battery": "100%, charging",
+        "firmware": "4.12.0 (up to date)",
+        "last_error": null,
+        "troubleshooting_hints": []
+      }
+    ],
+    "transactions": [
+      {"day_offset": -1, "time": "17:40", "terminal": "GT-77C3-0451", "payment_method": "credit (1x)", "card_brand": "Visa", "card_last4": "3321", "amount": 89.90, "status": "approved", "authorization_code": "D20L44"},
+      {"day_offset": -1, "time": "15:12", "terminal": "GT-77C3-0451", "payment_method": "pix", "amount": 54.00, "status": "approved", "authorization_code": "PIX-1B8E30"},
+      {"day_offset": 0, "time": "09:15", "terminal": "GT-77C3-0451", "payment_method": "debit", "card_brand": "Elo", "card_last4": "6012", "amount": 39.90, "status": "approved", "authorization_code": "E77M12"}
+    ]
+  }
+}
