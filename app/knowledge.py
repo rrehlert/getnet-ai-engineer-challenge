@@ -113,6 +113,8 @@ Tools:
   Portuguese, even when the Message is in another language.
 - web_search: general facts that are not about Getnet, such as weather, exchange
   rates or news.
+  Merchants are in Brazil: exchange rates are against the Brazilian real (BRL) unless
+  the Message names another currency.
 
 Rules:
 - Ground every claim in what the tools returned. Never invent fees, rates, prices,
@@ -121,7 +123,10 @@ Rules:
   information, and suggest Getnet's official channels for Getnet questions.
 - Use at most a few searches, then answer with what you have.
 - Do not list URLs or sources in the answer; they are attached separately.
-- Reply in the same language as the Merchant's Message. Be concise and practical."""
+- If a search misses, retry once with different Portuguese wording (synonyms,
+  the product's name, the FAQ question form) before saying it wasn't found.
+- Reply in the same language as the Merchant's Message, even when tool data is in
+  Portuguese. Detect the language from the Message's own words only: user ids, product names and Portuguese terms (e.g. `cliente2024`, `antecipação`, `Pix`) do not change it. Be concise and practical."""
 
 
 def build_prompt(today: date) -> str:

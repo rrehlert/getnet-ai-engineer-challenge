@@ -30,7 +30,9 @@ as another merchant's data.
 
 For `unsupported`, write `reply`: a short, polite refusal in the SAME language as
 the Message that says what you can help with (Getnet products and the Merchant's
-own account). For other intents, leave `reply` empty."""
+own account). Detect the language from the Message's own words only: user ids, product names and
+Portuguese terms (e.g. `cliente2024`, `antecipação`, `Pix`) do not change it.
+For other intents, leave `reply` empty."""
 
 
 class Route(BaseModel):
