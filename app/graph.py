@@ -7,17 +7,31 @@ accumulated across nodes, so each node returns only its own.
 """
 
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Annotated, Literal, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 Intent = Literal["knowledge", "support", "unsupported"]
+Agent = Literal["router", "knowledge", "support"]
+
+
+def agent_for(intent: Intent) -> Agent:
+    """The Agent that answers an Intent: the Router itself refuses `unsupported`."""
+    return "router" if intent == "unsupported" else intent
 
 
 class Source(TypedDict):
     url: str
     title: str
+
+
+def dedup_sources(sources: Iterable[Source]) -> list[Source]:
+    """Sources once per URL, first occurrence wins, in order."""
+    seen: dict[str, Source] = {}
+    for s in sources:
+        seen.setdefault(s["url"], {"url": s["url"], "title": s["title"]})
+    return list(seen.values())
 
 
 class GraphState(TypedDict):

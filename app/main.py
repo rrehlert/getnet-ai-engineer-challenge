@@ -10,7 +10,7 @@ from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.graph import Source, build_graph
+from app.graph import Agent, Intent, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import log_request, setup_logging
@@ -25,8 +25,8 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
-    intent: str
-    agent: str
+    intent: Intent
+    agent: Agent
     sources: list[Source]
     steps: list[str]
     trace_id: str
@@ -182,7 +182,7 @@ def create_app(
         return ChatResponse(
             answer=result.get("answer", ""),
             intent=intent,
-            agent="router" if intent == "unsupported" else intent,
+            agent=agent_for(intent),
             sources=result.get("sources", []),
             steps=result.get("steps", []),
             trace_id=trace_id,

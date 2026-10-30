@@ -15,7 +15,7 @@ from typing import Protocol
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.graph import Source
+from app.graph import Source, dedup_sources
 
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 CHUNK_SIZE = 300
@@ -78,11 +78,9 @@ def collection_name(files: Iterable[Path], model: str, size: int, overlap: int) 
 
 def relevant_sources(hits: Iterable[Hit], threshold: float) -> list[Source]:
     """Sources: pages of the hits at or above the threshold, deduplicated by URL."""
-    seen: dict[str, Source] = {}
-    for hit in hits:
-        if hit.similarity >= threshold and hit.chunk.url not in seen:
-            seen[hit.chunk.url] = {"url": hit.chunk.url, "title": hit.chunk.title}
-    return list(seen.values())
+    return dedup_sources(
+        {"url": h.chunk.url, "title": h.chunk.title} for h in hits if h.similarity >= threshold
+    )
 
 
 class Embedder(Protocol):

@@ -9,6 +9,7 @@ import logging
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
+from app.graph import Intent
 from app.observability import emit
 from app.router import INTENT_POLICY
 
@@ -39,17 +40,17 @@ policy? Score 0-1."""
 
 ANSWER_RUBRICS = {
     "knowledge": "The reply is grounded in the Sources and actually answers the question.",
-    "support": "The reply uses the account tool data, addresses the user's issue, and states amounts in R$.",
+    "support": "The reply uses the account tool data, addresses the Merchant's issue, and states amounts in R$.",
     "unsupported": "The reply is polite, in the Message's language, and offers what the system can help with "
-    "(Getnet products/fees and the user's own account).",
+    "(Getnet products/fees and the Merchant's own account).",
 }
 
 
-def _route_input(message: str, intent: str, user_id: str = "", **_) -> list[tuple[str, str]]:
+def _route_input(message: str, intent: Intent, user_id: str = "", **_) -> list[tuple[str, str]]:
     return [("system", ROUTE_PROMPT), ("human", f"Merchant: {user_id}\nMessage: {message}\nIntent: {intent}")]
 
 
-def _answer_input(message: str, intent: str, answer: str, sources: list, **_) -> list[tuple[str, str]]:
+def _answer_input(message: str, intent: Intent, answer: str, sources: list, **_) -> list[tuple[str, str]]:
     rubric = ANSWER_RUBRICS.get(intent, ANSWER_RUBRICS["knowledge"])
     system = f"You judge a reply from Getnet merchant support. Rubric for Intent '{intent}': {rubric} Score 0-1."
     human = (
@@ -67,7 +68,7 @@ def run_judges(
     *,
     trace_id: str,
     message: str,
-    intent: str,
+    intent: Intent,
     answer: str,
     sources: list,
     user_id: str = "",
