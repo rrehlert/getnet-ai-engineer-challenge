@@ -76,7 +76,8 @@ class KeywordEmbedder:
 
     WORDS = ["pix", "antecipação", "maquininha"]
 
-    def __init__(self):
+    def __init__(self, model="keywords-v1"):
+        self.model = model
         self.calls = 0
 
     def embed(self, texts):
@@ -108,3 +109,15 @@ def test_index_is_built_once_and_returns_most_similar_chunks(tmp_path):
 
     build_index(tmp_path / "chroma", embedder, corpus_dir=corpus)
     assert embedder.calls == 1  # reused, not re-embedded
+
+
+def test_index_is_rebuilt_when_the_embedders_model_changes(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    write(corpus, "pix.md", page("Pix", "https://g/pix", "O Pix cai na hora."))
+    build_index(tmp_path / "chroma", KeywordEmbedder("keywords-v1"), corpus_dir=corpus)
+
+    other = KeywordEmbedder("keywords-v2")
+    build_index(tmp_path / "chroma", other, corpus_dir=corpus)
+
+    assert other.calls == 1  # a different model never reuses the old vectors

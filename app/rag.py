@@ -20,6 +20,7 @@ from app.graph import Source
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 CHUNK_SIZE = 300
 CHUNK_OVERLAP = 50
+TOP_K = 4
 CORPUS_DIR = Path(__file__).resolve().parent.parent / "corpus"
 
 
@@ -32,7 +33,7 @@ class Page:
 
 @dataclass(frozen=True)
 class Chunk:
-    text: str  # "<page title>\n<passage>"
+    text: str  # "<page title>\n<Chunk>"
     url: str
     title: str
 
@@ -85,6 +86,8 @@ def relevant_sources(hits: Iterable[Hit], threshold: float) -> list[Source]:
 
 
 class Embedder(Protocol):
+    model: str  # hashed into the collection name
+
     def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
     def embed_query(self, text: str) -> list[float]: ...
 
@@ -110,7 +113,7 @@ class CorpusIndex:
         self.collection = collection
         self.embedder = embedder
 
-    def search(self, query: str, k: int = 4) -> list[Hit]:
+    def search(self, query: str, k: int = TOP_K) -> list[Hit]:
         r = self.collection.query(
             query_embeddings=[self.embedder.embed_query(query)],
             n_results=k,
@@ -125,7 +128,6 @@ class CorpusIndex:
 def build_index(
     chroma_dir: Path | str,
     embedder: Embedder,
-    model: str = EMBEDDING_MODEL,
     corpus_dir: Path = CORPUS_DIR,
     size: int = CHUNK_SIZE,
     overlap: int = CHUNK_OVERLAP,
@@ -134,7 +136,7 @@ def build_index(
     import chromadb
 
     files = corpus_files(corpus_dir)
-    name = collection_name(files, model, size, overlap)
+    name = collection_name(files, embedder.model, size, overlap)
     client = chromadb.PersistentClient(path=str(chroma_dir))
     existing = {c.name for c in client.list_collections()}
     collection = client.get_or_create_collection(
