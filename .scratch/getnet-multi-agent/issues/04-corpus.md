@@ -1,6 +1,6 @@
 # 04: Fetch script and committed Corpus
 
-Status: ready-for-agent
+Status: closed
 Blocked by: 02
 
 - `scripts/fetch_corpus.py`: curated URL list (getnet.net/en, site.getnet.com.br product pages, `/duvidas/` FAQs); httpx + trafilatura; lxml XPath for the FAQ modals.

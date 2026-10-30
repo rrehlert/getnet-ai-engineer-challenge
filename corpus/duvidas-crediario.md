@@ -1,0 +1,19 @@
+---
+url: "https://site.getnet.com.br/duvidas/crediario/"
+lang: "pt-BR"
+title: "Perguntas frequentes: crediário"
+---
+
+## Como eu contrato o Crediário e qual a taxa?
+A habilitação pode ser realizada através do aplicativo Getnet (Android e iOS) ou através da central. É possível consultar se o Crediário está habilitado para o seu Estabelecimento no Aplicativo da Getnet (acesse em: Meu negócio > Taxas e modalidades > Cartões) ou no Portal do Cliente. Você também pode contatar a Central de Atendimento para verificar se o seu Estabelecimento está habilitado para operar com a modalidade. Caso a modalidade esteja habilitada, mas a opção Crediário ainda não esteja disponível em sua máquina, é importante realizar uma transação de adquirência (bandeiras Mastercard, Visa, Elo e Amex) ou proceder com a inicialização do terminal (Suporte > Bandeiras > Funções Técnicas > Inicialização). A taxa de desconto do Crediário é parte integrante do seu contrato de Adesão ao Sistema Getnet e pode ser consultada no Portal do Cliente e/ou no Aplicativo Getnet Brasil.
+
+## Até quantas parcelas posso fazer e como sei os juros para informar ao meu cliente (portador do cartão)?
+Cada emissor de cartão estabelece o limite de parcelas conforme as suas políticas de crédito. Os juros ao cliente (portador do cartão) serão visualizados por meio da simulação realizada diretamente na maquininha: Inserindo o cartão, incluindo o valor e a opção de pagamento na opção crédito > crediário. É possível também a impressão do comprovante da simulação na maquininha com bobina, assim o cliente conseguirá avaliar os juros e o valor final da compra. Lembrando que a simulação é apenas para consulta, sendo sujeita a análise de crédito, portanto, cabe ao emissor do cartão aprovar a transação no momento da contratação.
+
+## Onde visualizo o pagamento e em que prazo eu recebo?
+As informações de pagamento podem ser consultadas no Aplicativo Getnet (Vendas) e/ou no Portal do Cliente.
+Todas as vendas realizadas na modalidade Crediário são pagas em até 2 dias úteis após a captura da transação, de uma única vez, independente da quantidade de parcelas escolhida pelo portador. Lembrando que do valor da transação original é subtraído o valor da taxa de desconto.
+
+## Qualquer estabelecimento pode ter o Crediário? E se eu não quiser ter o produto?
+A habilitação do produto Crediário está sujeita à análise pela Getnet.
+Caso você não deseje ter o Crediário como mais uma opção de pagamento, basta entrar em contato com a Central de Atendimento da Getnet e solicitar a desabilitação desta modalidade.
