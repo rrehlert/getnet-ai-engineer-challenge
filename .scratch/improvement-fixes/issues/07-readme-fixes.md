@@ -11,11 +11,11 @@
 
 **Blocked by:** 01, 02, 03, 04, 05, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Configuration table updated
-- [ ] Privacy section added
-- [ ] Judge limitation updated
-- [ ] Scenario output format documented
-- [ ] CI and container changes mentioned
-- [ ] Diary linked
+- [x] Configuration table updated
+- [x] Privacy section added
+- [x] Judge limitation updated
+- [x] Scenario output format documented
+- [x] CI and container changes mentioned
+- [x] Diary linked
