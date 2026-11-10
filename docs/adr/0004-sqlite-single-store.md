@@ -1,0 +1,3 @@
+# SQLite as the single store, no LangGraph checkpointer
+
+Conversations, Turns, human-takeover state (Mode, Handoff Briefs, claims) and the operator audit trail live in one SQLite database (WAL mode) on the compose volume, next to the Corpus index. We do not use a LangGraph checkpointer: the Turns table is the only history, and the recent Turns are passed explicitly into graph state on every Message. A checkpointer would duplicate the history in an opaque form, and its main extra capability (`interrupt()`/resume) isn't needed for human takeover (ADR 0006). SQLite fits a single-container demo with zero extra services; Postgres is the next step if the API ever runs as more than one instance.
