@@ -8,14 +8,14 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Knowledge node result contains Evidence items with tool name and output (fake model emitting tool calls)
-- [ ] Customer Support node result contains Evidence from account tools; none for an unknown Merchant
-- [ ] Evidence is absent from the `/chat` response
-- [ ] `answer` Judge prompt contains the Evidence text; total is cut at the cap with a marker
-- [ ] End to end: `create_app` with an injected graph returning Evidence and a fake Judge model passes Evidence to the Judge
-- [ ] Default Judge model is Haiku 5.5; explicit `JUDGE_MODEL` overrides it
-- [ ] Warning logged when `JUDGE_MODEL` equals `LLM_MODEL`
-- [ ] `.env.example` documents the new default
-- [ ] No real LLM calls in tests
+- [x] Knowledge node result contains Evidence items with tool name and output (fake model emitting tool calls)
+- [x] Customer Support node result contains Evidence from account tools; none for an unknown Merchant
+- [x] Evidence is absent from the `/chat` response
+- [x] `answer` Judge prompt contains the Evidence text; total is cut at the cap with a marker
+- [x] End to end: `create_app` with an injected graph returning Evidence and a fake Judge model passes Evidence to the Judge
+- [x] Default Judge model is Haiku 5.5; explicit `JUDGE_MODEL` overrides it
+- [x] Warning logged when `JUDGE_MODEL` equals `LLM_MODEL`
+- [x] `.env.example` documents the new default
+- [x] No real LLM calls in tests
