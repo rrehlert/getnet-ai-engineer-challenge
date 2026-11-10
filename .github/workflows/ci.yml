@@ -1,8 +1,17 @@
 name: CI
 
 on:
+  # Skip doc/ticket-only changes. Not a blanket "**.md": corpus/*.md feeds the index.
   push:
+    paths-ignore:
+      - ".scratch/**"
+      - "docs/**"
+      - "IMPROVEMENT_RUN_DIARY.md"
   pull_request:
+    paths-ignore:
+      - ".scratch/**"
+      - "docs/**"
+      - "IMPROVEMENT_RUN_DIARY.md"
 
 permissions:
   contents: read
