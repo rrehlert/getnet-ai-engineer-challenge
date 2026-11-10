@@ -50,3 +50,22 @@ Decisions adopted at the start:
 ### Session 1 — 2026-11-10
 
 Goal: setup, `improvement-fixes` spec and tickets.
+
+Done (clock started 19:13:42):
+
+| Time | Commit | What |
+|---|---|---|
+| 19:13:42 | `b7342e9` | Clock start: diary, plan, rules; tags `v1-submitted`, `improve-s1-start` |
+| 19:19:57 | `cd40ea1` | `improvement-fixes` spec; glossary: Evidence |
+| 19:24:15 | `58d4c32` | `improvement-fixes` tickets 01–07 |
+| 19:35:05 | `e3b1783` | Specs `conversations-identity`, `human-takeover`, `eval-expansion`; ADRs 0004–0006 |
+
+Decisions:
+
+- Judge model defaults to Claude Haiku 5.5: same price as the reply model, different family (independence, not proven accuracy; calibration deferred).
+- No LangGraph checkpointer: Turns table is the only history (ADR 0004).
+- Anonymous chat allowed, Knowledge only; identity only from a verified token (ADR 0005).
+- Human takeover as a Conversation Mode, not `interrupt()` (ADR 0006).
+- B specs written up front, while the reasoning was fresh; their tickets are written when each feature starts, against the code as it is then.
+
+Next: implement `improvement-fixes` ticket by ticket, starting with 01 (CI).
