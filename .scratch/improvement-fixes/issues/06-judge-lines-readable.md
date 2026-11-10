@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 (Log privacy): the new fields must never be written unredacted
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Judge line contains `message` and `answer`
 - [x] Both are redacted under the default mode
