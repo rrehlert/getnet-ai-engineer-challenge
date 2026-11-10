@@ -77,7 +77,8 @@ def create_app(
     `judge_model` defaults to `JUDGE_MODEL` via the model factory; at startup a
     warning is logged if that equals `LLM_MODEL`.
 
-    `log_privacy` defaults to `LOG_HASH_KEY` / `LOG_MESSAGES`; an empty key is
+    `log_privacy` defaults to `LOG_HASH_KEY` / `LOG_MESSAGES`, resolved at startup
+    (or on the first request if the app was never started); an empty key is
     replaced by a random one, with a warning.
 
     `load_index` runs in a background thread at startup; until it returns,
@@ -93,6 +94,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        get_log_privacy()
         if judge_model is None and judges_on():
             from app.settings import get_settings, warn_if_judge_not_independent
 
@@ -102,16 +104,19 @@ def create_app(
             app.state.index_thread.start()
         yield
 
-    if log_privacy is None:
-        from app.settings import get_settings
-
-        log_privacy = LogPrivacy.from_settings(get_settings())
-
     app = FastAPI(title="Getnet Multi-Agent Support", lifespan=lifespan)
     app.state.graph = graph
     app.state.index = None
     app.state.needs_index = load_index is not None
     app.state.judge_model = judge_model
+    app.state.log_privacy = log_privacy
+
+    def get_log_privacy() -> LogPrivacy:
+        if app.state.log_privacy is None:
+            from app.settings import get_settings
+
+            app.state.log_privacy = LogPrivacy.from_settings(get_settings())
+        return app.state.log_privacy
 
     def judges_on() -> bool:
         if judge_enabled is not None:
@@ -162,7 +167,7 @@ def create_app(
 
         def log_outcome(outcome: str, result: dict | None = None) -> None:
             log_request(
-                privacy=log_privacy,
+                privacy=get_log_privacy(),
                 trace_id=trace_id,
                 user_id=request.user_id,
                 message=request.message,

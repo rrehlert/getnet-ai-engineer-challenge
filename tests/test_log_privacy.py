@@ -167,3 +167,21 @@ def test_judge_reason_is_redacted_and_judges_are_told_not_to_quote_personal_data
     for build in JUDGES.values():
         (_, system), _ = build(message="hi", intent="knowledge", answer="ok", sources=[], evidence=[])
         assert "personal data" in system
+
+
+def test_log_hash_key_warning_comes_at_startup_not_at_app_creation(monkeypatch, caplog):
+    from app.settings import get_settings
+
+    monkeypatch.setenv("LOG_HASH_KEY", "")
+    get_settings.cache_clear()
+    caplog.set_level(logging.INFO)
+    try:
+        app = app_for(route_to("knowledge"), judge_enabled=False)
+        created = [r for r in caplog.records if "LOG_HASH_KEY" in r.getMessage()]
+        with TestClient(app):
+            pass
+    finally:
+        get_settings.cache_clear()
+
+    assert created == []
+    assert [r for r in caplog.records if "LOG_HASH_KEY" in r.getMessage()]
