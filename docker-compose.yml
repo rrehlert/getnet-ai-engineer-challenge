@@ -7,6 +7,9 @@ services:
     environment:
       PORT: ${PORT:-8000}
       JUDGE_ENABLED: ${JUDGE_ENABLED:-true}
+    volumes:
+      # Corpus index survives container recreation (rebuilt only when the corpus changes).
+      - chroma:/app/chroma
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     healthcheck:
@@ -15,3 +18,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+volumes:
+  chroma:

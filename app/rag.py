@@ -8,6 +8,7 @@ an unchanged corpus reuses the index and any change rebuilds it.
 
 import hashlib
 import json
+import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,8 @@ CHUNK_SIZE = 300
 CHUNK_OVERLAP = 50
 TOP_K = 4
 CORPUS_DIR = Path(__file__).resolve().parent.parent / "corpus"
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -140,7 +143,8 @@ def build_index(
     collection = client.get_or_create_collection(
         name, configuration={"hnsw": {"space": "cosine"}}, embedding_function=None
     )
-    if name not in existing or collection.count() == 0:
+    count = collection.count()
+    if name not in existing or count == 0:
         chunks = [c for f in files for c in chunk_page(load_page(f), size, overlap)]
         vectors = embedder.embed([c.text for c in chunks])
         batch = client.get_max_batch_size()
@@ -152,4 +156,7 @@ def build_index(
                 documents=[c.text for c in part],
                 metadatas=[{"url": c.url, "title": c.title} for c in part],
             )
+        log.info("corpus index built: %s (%d chunks)", name, len(chunks))
+    else:
+        log.info("corpus index reused: %s (%d chunks)", name, count)
     return CorpusIndex(collection, embedder)

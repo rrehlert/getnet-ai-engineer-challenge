@@ -121,3 +121,17 @@ def test_index_is_rebuilt_when_the_embedders_model_changes(tmp_path):
     build_index(tmp_path / "chroma", other, corpus_dir=corpus)
 
     assert other.calls == 1  # a different model never reuses the old vectors
+
+
+def test_log_says_whether_the_index_was_built_or_reused(tmp_path, caplog):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    write(corpus, "pix.md", page("Pix", "https://g/pix", "O Pix cai na hora."))
+
+    with caplog.at_level("INFO", logger="app.rag"):
+        build_index(tmp_path / "chroma", KeywordEmbedder(), corpus_dir=corpus)
+        build_index(tmp_path / "chroma", KeywordEmbedder(), corpus_dir=corpus)
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "app.rag"]
+    assert messages[0].startswith("corpus index built")
+    assert messages[1].startswith("corpus index reused")

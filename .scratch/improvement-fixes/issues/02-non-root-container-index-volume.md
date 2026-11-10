@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] The app process inside the container is not root
-- [ ] Compose mounts a named volume at the index directory
-- [ ] First `docker compose up --build` builds the index on the fresh volume without permission errors
-- [ ] After `docker compose down` and `up`, the index is reused (log shows no rebuild) and `/health` is 200
-- [ ] Embedding model still loads offline from the baked cache
+- [x] The app process inside the container is not root
+- [x] Compose mounts a named volume at the index directory
+- [x] First `docker compose up --build` builds the index on the fresh volume without permission errors
+- [x] After `docker compose down` and `up`, the index is reused (log shows no rebuild) and `/health` is 200
+- [x] Embedding model still loads offline from the baked cache
 - [ ] CI smoke job (01) passes

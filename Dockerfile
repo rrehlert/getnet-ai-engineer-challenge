@@ -24,6 +24,14 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
+# Run as a non-root user. The index dir exists in the image owned by `app`, so a
+# fresh named volume mounted there (docker-compose.yml) inherits that ownership.
+RUN useradd --system --uid 10001 --user-group --no-create-home app \
+    && mkdir -p /app/chroma \
+    && chown app:app /app/chroma \
+    && chmod -R a+rX "$FASTEMBED_CACHE_PATH"
+USER app
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
