@@ -71,6 +71,9 @@ def test_tools_read_the_merchant_from_context():
     [out] = tool_outputs(model)
     assert "GT-77C3-0451" in out.content
     assert "GT-58A1-0093" not in out.content
+    [evidence] = update["evidence"]
+    assert evidence["tool"] == "get_terminal_status"
+    assert "GT-77C3-0451" in evidence["content"]
 
 
 def test_yesterdays_settlements_with_dated_prompt_and_profile():
@@ -98,6 +101,7 @@ def test_unknown_merchant_cannot_call_tools():
     update = support({"message": "Quando cai o dinheiro?", "user_id": "cliente9999"})
 
     assert update["steps"] == ["support"]
+    assert update["evidence"] == []
     assert "cliente9999" in update["answer"]
     assert model.bound == []
     assert not tool_outputs(model)

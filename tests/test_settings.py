@@ -1,6 +1,8 @@
+import logging
+
 import pytest
 
-from app.settings import Settings
+from app.settings import Settings, warn_if_judge_not_independent
 
 ENV_VARS = [
     "LLM_MODEL",
@@ -30,16 +32,31 @@ def test_defaults_match_spec(clean_env):
     assert settings.openai_base_url == "https://openrouter.ai/api/v1"
     assert settings.tavily_api_key == ""
     assert settings.judge_enabled is False
-    assert settings.judge_model == "openai:openai/gpt-6-luna"
+    assert settings.judge_model == "openai:anthropic/claude-haiku-5.5"
     assert settings.relevance_threshold == 0.5
     assert settings.port == 8000
     assert settings.chroma_dir == "chroma"
 
 
-def test_judge_model_follows_llm_model_when_unset(clean_env):
+def test_judge_model_does_not_follow_llm_model(clean_env):
     clean_env.setenv("LLM_MODEL", "anthropic:claude-x")
 
-    assert Settings(_env_file=None).judge_model == "anthropic:claude-x"
+    assert Settings(_env_file=None).judge_model == "openai:anthropic/claude-haiku-5.5"
+
+
+def test_warns_when_judge_model_equals_llm_model(clean_env, caplog):
+    clean_env.setenv("LLM_MODEL", "openai:same")
+    clean_env.setenv("JUDGE_MODEL", "openai:same")
+
+    warn_if_judge_not_independent(Settings(_env_file=None))
+
+    assert any(r.levelno == logging.WARNING and "JUDGE_MODEL" in r.getMessage() for r in caplog.records)
+
+
+def test_no_warning_with_default_models(clean_env, caplog):
+    warn_if_judge_not_independent(Settings(_env_file=None))
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 def test_env_overrides(clean_env):

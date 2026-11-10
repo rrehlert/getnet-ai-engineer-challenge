@@ -2,7 +2,7 @@
 
 Specialist interface (Knowledge / Customer Support Agents and the Router):
 a callable that takes the `GraphState` and returns a partial update dict,
-typically `{answer, sources, steps, tokens}`. `steps` and `tokens` are
+typically `{answer, sources, evidence, steps, tokens}`. `steps` and `tokens` are
 accumulated across nodes, so each node returns only its own.
 """
 
@@ -34,12 +34,20 @@ def dedup_sources(sources: Iterable[Source]) -> list[Source]:
     return list(seen.values())
 
 
+class Evidence(TypedDict):
+    """One tool output an Agent saw: the tool's name and the text it returned."""
+
+    tool: str
+    content: str
+
+
 class GraphState(TypedDict):
     message: str
     user_id: str
     intent: NotRequired[Intent]
     answer: NotRequired[str]
     sources: NotRequired[list[Source]]
+    evidence: NotRequired[list[Evidence]]
     steps: Annotated[list[str], operator.add]
     tokens: Annotated[int, operator.add]
 

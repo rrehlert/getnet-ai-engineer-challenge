@@ -1,7 +1,9 @@
+import logging
 from functools import lru_cache
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+log = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -15,18 +17,21 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     # Off by default so tests never call a judge; compose turns it on.
     judge_enabled: bool = False
-    # Empty means "same as llm_model".
-    judge_model: str = ""
+    # Pick a model from a different family than `llm_model` so the Judge doesn't grade its own writing.
+    judge_model: str = "openai:anthropic/claude-haiku-5.5"
     relevance_threshold: float = 0.5
     port: int = 8000
     # Persistent Chroma index (gitignored; built at startup, not baked into the image).
     chroma_dir: str = "chroma"
 
-    @model_validator(mode="after")
-    def _default_judge_model(self) -> "Settings":
-        if not self.judge_model:
-            self.judge_model = self.llm_model
-        return self
+
+def warn_if_judge_not_independent(settings: Settings) -> None:
+    """Log a warning when the Judge would rate replies from the very model that wrote them."""
+    if settings.judge_model == settings.llm_model:
+        log.warning(
+            "JUDGE_MODEL equals LLM_MODEL (%s): Judges will rate replies written by the same model",
+            settings.llm_model,
+        )
 
 
 @lru_cache

@@ -165,6 +165,7 @@ def test_tool_call_limit_stops_executing_tools_after_four_calls():
     assert update["answer"] == "Com o que encontrei: ..."
     executed = [m for m in model.seen[-1] if isinstance(m, ToolMessage) and m.status != "error"]
     assert len(executed) == 4
+    assert len(update["evidence"]) == 4  # calls refused by the limit are not Evidence
 
 
 def test_prompt_includes_todays_date():
@@ -177,3 +178,22 @@ def test_prompt_includes_todays_date():
     assert "2026-10-30" in system.content
     assert update["sources"] == []
     assert update["steps"] == ["knowledge"]
+
+
+def test_evidence_records_every_tool_output_in_order_including_chunks_below_threshold():
+    web = lambda q: [{"title": "Clima", "href": "https://w/clima", "body": "28 °C"}]  # noqa: E731
+    model = scripted(call("search_corpus", "pix", "c1"), call("web_search", "clima", "c2"), final("ok"))
+
+    update = knowledge_with(model, web=web)({"message": "pix e clima", "user_id": "u"})
+
+    corpus, weather = update["evidence"]
+    assert corpus["tool"] == "search_corpus"
+    assert "Aluguel de maquininha." in corpus["content"]  # similarity 0.30, below the threshold
+    assert weather["tool"] == "web_search"
+    assert "28 °C" in weather["content"]
+
+
+def test_no_evidence_when_no_tool_was_called():
+    update = knowledge_with(scripted(final("Não encontrei.")))({"message": "x", "user_id": "u"})
+
+    assert update["evidence"] == []

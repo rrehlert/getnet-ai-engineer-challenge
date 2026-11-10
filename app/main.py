@@ -14,6 +14,7 @@ from app.graph import Agent, Intent, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import log_request, setup_logging
+from app.settings import get_settings, warn_if_judge_not_independent
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ def create_app(
             intent=result["intent"],
             answer=result.get("answer", ""),
             sources=result.get("sources", []),
+            evidence=result.get("evidence", []),
             user_id=result.get("user_id", ""),
         )
 
@@ -192,4 +194,5 @@ def create_app(
 
 
 setup_logging()
+warn_if_judge_not_independent(get_settings())
 app = create_app(load_index=load_default_index)

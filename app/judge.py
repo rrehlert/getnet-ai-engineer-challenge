@@ -5,17 +5,20 @@ Runs after the reply is sent; failures are logged, never raised.
 
 import json
 import logging
+from collections.abc import Sequence
 
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
-from app.graph import Intent
+from app.graph import Evidence, Intent
 from app.observability import emit
 from app.router import INTENT_POLICY
 
 log = logging.getLogger(__name__)
 
 FLAG_BELOW = 0.7
+# Total characters of Evidence shown to the `answer` Judge.
+EVIDENCE_CAP = 6000
 
 
 class Verdict(BaseModel):
@@ -39,25 +42,44 @@ policy? Score 0-1."""
 )
 
 ANSWER_RUBRICS = {
-    "knowledge": "The reply is grounded in the Sources and actually answers the question.",
-    "support": "The reply uses the account tool data, addresses the Merchant's issue, and states amounts in R$.",
+    "knowledge": "Every claim in the reply is supported by the Evidence, and the reply actually answers "
+    "the question (saying plainly that nothing was found is fine when the Evidence has nothing relevant).",
+    "support": "Every claim in the reply (amounts, dates, statuses, codes, hints) is supported by the "
+    "account Evidence; the reply addresses the Merchant's issue and states amounts in R$.",
     "unsupported": "The reply is polite, in the Message's language, and offers what the system can help with "
     "(Getnet products/fees and the Merchant's own account).",
 }
+
+ANSWER_PROMPT = """You judge a reply from Getnet merchant support.
+Evidence is the tool output the Agent actually saw while answering. A claim that the
+Evidence does not support counts against the reply, however plausible it sounds.
+Rubric for Intent '{intent}': {rubric} Score 0-1."""
+
+
+def format_evidence(evidence: Sequence[Evidence]) -> str:
+    """Evidence items in order, cut at `EVIDENCE_CAP` characters in total with a marker."""
+    if not evidence:
+        return "(none)"
+    text = "\n\n".join(f"[{i}] {e['tool']}\n{e['content']}" for i, e in enumerate(evidence, 1))
+    if len(text) <= EVIDENCE_CAP:
+        return text
+    return text[:EVIDENCE_CAP] + f"\n[Evidence truncated: {len(text) - EVIDENCE_CAP} more characters cut]"
 
 
 def _route_input(message: str, intent: Intent, user_id: str = "", **_) -> list[tuple[str, str]]:
     return [("system", ROUTE_PROMPT), ("human", f"Merchant: {user_id}\nMessage: {message}\nIntent: {intent}")]
 
 
-def _answer_input(message: str, intent: Intent, answer: str, sources: list, **_) -> list[tuple[str, str]]:
+def _answer_input(
+    message: str, intent: Intent, answer: str, sources: list, evidence: Sequence[Evidence], **_
+) -> list[tuple[str, str]]:
     rubric = ANSWER_RUBRICS.get(intent, ANSWER_RUBRICS["knowledge"])
-    system = f"You judge a reply from Getnet merchant support. Rubric for Intent '{intent}': {rubric} Score 0-1."
     human = (
         f"Message: {message}\nIntent: {intent}\nReply: {answer}\n"
-        f"Sources: {json.dumps(sources, ensure_ascii=False)}"
+        f"Sources: {json.dumps(sources, ensure_ascii=False)}\n"
+        f"Evidence: {format_evidence(evidence)}"
     )
-    return [("system", system), ("human", human)]
+    return [("system", ANSWER_PROMPT.format(intent=intent, rubric=rubric)), ("human", human)]
 
 
 JUDGES = {"route": _route_input, "answer": _answer_input}
@@ -71,13 +93,21 @@ def run_judges(
     intent: Intent,
     answer: str,
     sources: list,
+    evidence: Sequence[Evidence],
     user_id: str = "",
 ) -> None:
     judge = model.with_structured_output(Verdict, method="function_calling")
     for judge_type, build_input in JUDGES.items():
         try:
             verdict = judge.invoke(
-                build_input(message=message, intent=intent, answer=answer, sources=sources, user_id=user_id)
+                build_input(
+                    message=message,
+                    intent=intent,
+                    answer=answer,
+                    sources=sources,
+                    evidence=evidence,
+                    user_id=user_id,
+                )
             )
             if not isinstance(verdict, Verdict):
                 raise ValueError(f"no verdict returned: {verdict!r}")

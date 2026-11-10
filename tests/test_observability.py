@@ -92,7 +92,7 @@ def test_judge_failure_is_logged_not_raised(caplog):
     caplog.set_level(logging.INFO)
     model = FakeJudgeModel(messages=iter([AIMessage("no tool call"), verdict(0.8)]))
 
-    run_judges(model, trace_id="t1", message="hi", intent="unsupported", answer="Não posso.", sources=[])
+    run_judges(model, trace_id="t1", message="hi", intent="unsupported", answer="Não posso.", sources=[], evidence=[])
 
     assert [j["judge_type"] for _, j in lines(caplog, "judge")] == ["answer"]
     assert any(r.levelno == logging.ERROR and "route" in r.getMessage() for r in caplog.records)
@@ -125,3 +125,67 @@ def test_request_log_line_when_index_is_not_ready(caplog):
     assert line["trace_id"] == body["trace_id"]
     assert line["outcome"] == "starting"
     assert line["intent"] is None
+
+
+def answer_prompt(evidence, intent="knowledge"):
+    from app.judge import JUDGES
+
+    (_, system), (_, human) = JUDGES["answer"](
+        message="Pix cai na hora?", intent=intent, answer="Sim.", sources=[], evidence=evidence
+    )
+    return system, human
+
+
+def test_answer_judge_rates_every_claim_against_the_evidence():
+    system, human = answer_prompt([{"tool": "search_corpus", "content": "O Pix cai na hora."}])
+
+    assert "every claim" in system.lower() and "evidence" in system.lower()
+    assert "search_corpus" in human
+    assert "O Pix cai na hora." in human
+
+
+def test_answer_judge_evidence_is_cut_at_the_cap_with_a_marker():
+    evidence = [
+        {"tool": "search_corpus", "content": "A" * 4000},
+        {"tool": "web_search", "content": "B" * 4000},
+        {"tool": "web_search", "content": "C" * 100},
+    ]
+    _, human = answer_prompt(evidence)
+
+    assert "A" * 4000 in human  # earlier items are kept whole
+    assert 1500 < human.count("B") < 2000
+    assert "C" * 100 not in human
+    assert "[Evidence truncated" in human
+
+
+def test_answer_judge_without_evidence_says_so():
+    _, human = answer_prompt([], intent="unsupported")
+
+    assert "Evidence: (none)" in human
+
+
+class RecordingJudgeModel(FakeJudgeModel):
+    seen: list = []
+
+    def _generate(self, messages, *args, **kwargs):
+        self.seen.append(list(messages))
+        return super()._generate(messages, *args, **kwargs)
+
+
+def knowledge_with_evidence(state):
+    return {
+        **knowledge(state),
+        "evidence": [{"tool": "search_corpus", "content": "Get Smart tem tela touchscreen."}],
+    }
+
+
+def test_evidence_reaches_the_answer_judge_but_not_the_chat_response():
+    model = RecordingJudgeModel(messages=iter([verdict(0.9), verdict(0.9)]), seen=[])
+    graph = build_graph(route_to("knowledge"), knowledge_with_evidence, support)
+    client = TestClient(create_app(graph=graph, judge_enabled=True, judge_model=model))
+
+    body = post(client).json()
+
+    assert "evidence" not in body
+    _route_call, answer_call = model.seen
+    assert "Get Smart tem tela touchscreen." in answer_call[-1].content
