@@ -9,10 +9,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Checking function unit-tested: correct Intent with a missing fact, wrong Intent with facts present, alternatives, case-insensitivity, scenario without facts
-- [ ] Support scenarios declare fixture-backed facts; stable Knowledge facts where they exist
-- [ ] Report shows routing and facts as separate totals and lists missing facts
-- [ ] Non-zero exit when routing or facts fail
-- [ ] Run once against a live stack; result recorded in the diary
+- [x] Checking function unit-tested: correct Intent with a missing fact, wrong Intent with facts present, alternatives, case-insensitivity, scenario without facts
+- [x] Support scenarios declare fixture-backed facts; stable Knowledge facts where they exist
+- [x] Report shows routing and facts as separate totals and lists missing facts
+- [x] Non-zero exit when routing or facts fail
+- [x] Run once against a live stack; result recorded in the diary
