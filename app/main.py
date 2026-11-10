@@ -14,7 +14,6 @@ from app.graph import Agent, Intent, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import log_request, setup_logging
-from app.settings import get_settings, warn_if_judge_not_independent
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +73,8 @@ def create_app(
     """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted.
 
     Judges run after a 200 when `judge_enabled` (default: `JUDGE_ENABLED`);
-    `judge_model` defaults to `JUDGE_MODEL` via the model factory.
+    `judge_model` defaults to `JUDGE_MODEL` via the model factory; at startup a
+    warning is logged if that equals `LLM_MODEL`.
 
     `load_index` runs in a background thread at startup; until it returns,
     `/health` and `/chat` answer 503. Without it there is no index to wait for.
@@ -89,6 +89,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if judge_model is None and judges_on():
+            from app.settings import get_settings, warn_if_judge_not_independent
+
+            warn_if_judge_not_independent(get_settings())
         if load_index is not None:
             app.state.index_thread = threading.Thread(target=_load, name="index", daemon=True)
             app.state.index_thread.start()
@@ -194,5 +198,4 @@ def create_app(
 
 
 setup_logging()
-warn_if_judge_not_independent(get_settings())
 app = create_app(load_index=load_default_index)

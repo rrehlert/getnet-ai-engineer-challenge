@@ -189,3 +189,31 @@ def test_evidence_reaches_the_answer_judge_but_not_the_chat_response():
     assert "evidence" not in body
     _route_call, answer_call = model.seen
     assert "Get Smart tem tela touchscreen." in answer_call[-1].content
+
+
+def judge_warnings(caplog):
+    return [r for r in caplog.records if r.levelno == logging.WARNING and "JUDGE_MODEL" in r.getMessage()]
+
+
+def start(app):
+    with TestClient(app):
+        pass
+
+
+def test_startup_warns_when_judge_model_equals_llm_model(monkeypatch, caplog):
+    from app.settings import get_settings
+
+    monkeypatch.setenv("LLM_MODEL", "openai:same")
+    monkeypatch.setenv("JUDGE_MODEL", "openai:same")
+    get_settings.cache_clear()
+    try:
+        start(app_for(route_to("knowledge"), judge_enabled=True))
+        warned_when_on = judge_warnings(caplog)
+        caplog.clear()
+        start(app_for(route_to("knowledge"), judge_enabled=False))
+        start(app_for(route_to("knowledge"), judge_enabled=True, judge_model=FakeJudgeModel(messages=iter([]))))
+    finally:
+        get_settings.cache_clear()
+
+    assert warned_when_on
+    assert judge_warnings(caplog) == []  # Judges off, or Judge model injected
