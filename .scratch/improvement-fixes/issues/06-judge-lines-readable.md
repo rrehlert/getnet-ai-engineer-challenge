@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Judge line contains `message` and `answer`
-- [ ] Both are redacted under the default mode
-- [ ] Each `LOG_MESSAGES` mode applies (`none` omits text and logs lengths, `full` logs raw, capped)
-- [ ] Both are capped at the same length as the request line's Message
+- [x] Judge line contains `message` and `answer`
+- [x] Both are redacted under the default mode
+- [x] Each `LOG_MESSAGES` mode applies (`none` omits text and logs lengths, `full` logs raw, capped)
+- [x] Both are capped at the same length as the request line's Message

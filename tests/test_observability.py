@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage
 from app.graph import build_graph
 from app.judge import run_judges
 from app.main import create_app
+from app.observability import LogPrivacy
 from tests.test_chat_api import knowledge, post, raising, route_to, support
 
 
@@ -92,7 +93,7 @@ def test_judge_failure_is_logged_not_raised(caplog):
     caplog.set_level(logging.INFO)
     model = FakeJudgeModel(messages=iter([AIMessage("no tool call"), verdict(0.8)]))
 
-    run_judges(model, trace_id="t1", message="hi", intent="unsupported", answer="Não posso.", sources=[], evidence=[])
+    run_judges(model, privacy=LogPrivacy(key=b"k"), trace_id="t1", message="hi", intent="unsupported", answer="Não posso.", sources=[], evidence=[])
 
     assert [j["judge_type"] for _, j in lines(caplog, "judge")] == ["answer"]
     assert any(r.levelno == logging.ERROR and "route" in r.getMessage() for r in caplog.records)

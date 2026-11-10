@@ -11,7 +11,7 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
 from app.graph import Evidence, Intent
-from app.observability import emit
+from app.observability import LogPrivacy, emit
 from app.router import INTENT_POLICY
 
 log = logging.getLogger(__name__)
@@ -94,6 +94,7 @@ JUDGES = {"route": _route_input, "answer": _answer_input}
 def run_judges(
     model: BaseChatModel,
     *,
+    privacy: LogPrivacy,
     trace_id: str,
     message: str,
     intent: Intent,
@@ -103,6 +104,7 @@ def run_judges(
     user_id: str = "",
 ) -> None:
     judge = model.with_structured_output(Verdict, method="function_calling")
+    texts = privacy.text_fields(message=message, answer=answer)
     for judge_type, build_input in JUDGES.items():
         try:
             verdict = judge.invoke(
@@ -123,6 +125,7 @@ def run_judges(
         emit(
             "judge",
             logging.WARNING if verdict.score < FLAG_BELOW else logging.INFO,
+            unredacted=texts,
             judge_type=judge_type,
             trace_id=trace_id,
             intent=intent,

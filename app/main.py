@@ -142,6 +142,7 @@ def create_app(
             return
         run_judges(
             model,
+            privacy=get_log_privacy(),
             trace_id=trace_id,
             message=message,
             intent=result["intent"],

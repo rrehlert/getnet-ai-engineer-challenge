@@ -21,7 +21,7 @@ MESSAGE_LIMIT = 500
 
 @dataclass(frozen=True)
 class LogPrivacy:
-    """How the request line identifies the Merchant and shows the Message."""
+    """How log lines identify the Merchant and show the Message and reply."""
 
     key: bytes
     messages: MessageMode = "redacted"
@@ -39,13 +39,20 @@ class LogPrivacy:
         """Keyed HMAC-SHA256 of the user id, first 16 hex characters."""
         return hmac.new(self.key, user_id.encode(), hashlib.sha256).hexdigest()[:16]
 
-    def message_fields(self, message: str) -> dict:
-        """The request line's Message fields under this mode, final (not redacted again)."""
-        if self.messages == "none":
-            return {"message_length": len(message)}
-        if self.messages == "full":
-            return {"message": message[:MESSAGE_LIMIT]}
-        return {"message": redact(message)[:MESSAGE_LIMIT]}
+    def text_fields(self, **texts: str) -> dict:
+        """Each text as a log field under this mode, final (not redacted again).
+
+        `none` logs `<name>_length` instead; `redacted` redacts then caps; `full` only caps.
+        """
+        out: dict = {}
+        for name, text in texts.items():
+            if self.messages == "none":
+                out[f"{name}_length"] = len(text)
+            elif self.messages == "full":
+                out[name] = text[:MESSAGE_LIMIT]
+            else:
+                out[name] = redact(text)[:MESSAGE_LIMIT]
+        return out
 
 
 def emit(event: str, level: int = logging.INFO, *, unredacted: dict | None = None, **fields) -> None:
@@ -68,7 +75,7 @@ def log_request(
     intent: Intent | None = result.get("intent")
     emit(
         "request",
-        unredacted=privacy.message_fields(message),
+        unredacted=privacy.text_fields(message=message),
         trace_id=trace_id,
         user_ref=privacy.user_ref(user_id),
         intent=intent,

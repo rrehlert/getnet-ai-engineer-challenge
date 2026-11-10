@@ -160,7 +160,7 @@ def test_judge_reason_is_redacted_and_judges_are_told_not_to_quote_personal_data
     leaky = "Merchant joao@example.com with CPF 123.456.789-09 was answered."
     model = FakeJudgeModel(messages=iter([verdict(0.9, leaky), verdict(0.9, leaky)]))
 
-    run_judges(model, trace_id="t1", message="hi", intent="knowledge", answer="ok", sources=[], evidence=[])
+    run_judges(model, privacy=LogPrivacy(key=b"k"), trace_id="t1", message="hi", intent="knowledge", answer="ok", sources=[], evidence=[])
 
     reasons = [j["reason"] for _, j in lines(caplog, "judge")]
     assert reasons == ["Merchant [EMAIL] with CPF [CPF] was answered."] * 2
@@ -185,3 +185,52 @@ def test_log_hash_key_warning_comes_at_startup_not_at_app_creation(monkeypatch, 
 
     assert created == []
     assert [r for r in caplog.records if "LOG_HASH_KEY" in r.getMessage()]
+
+
+ANSWER = "enviamos para joao@example.com " + "y" * 600
+
+
+def judge_lines(caplog, privacy):
+    caplog.clear()
+    caplog.set_level(logging.INFO)
+    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.9)]))
+    run_judges(
+        model, privacy=privacy, trace_id="t1", message=MESSAGE, intent="knowledge", answer=ANSWER,
+        sources=[], evidence=[],
+    )
+    judged = [j for _, j in lines(caplog, "judge")]
+    assert [j["judge_type"] for j in judged] == ["route", "answer"]
+    return judged
+
+
+def test_judge_line_has_message_and_answer_redacted_and_capped_by_default(caplog):
+    for line in judge_lines(caplog, LogPrivacy(key=b"k")):
+        assert line["message"] == ("meu cpf é [CPF] " + "x" * 600)[:500]
+        assert line["answer"] == ("enviamos para [EMAIL] " + "y" * 600)[:500]
+
+
+def test_judge_line_under_log_messages_none_logs_only_lengths(caplog):
+    for line in judge_lines(caplog, LogPrivacy(key=b"k", messages="none")):
+        assert "message" not in line and "answer" not in line
+        assert "xxx" not in json.dumps(line) and "yyy" not in json.dumps(line)
+        assert (line["message_length"], line["answer_length"]) == (len(MESSAGE), len(ANSWER))
+
+
+def test_judge_line_under_log_messages_full_logs_raw_text_still_capped(caplog):
+    for line in judge_lines(caplog, LogPrivacy(key=b"k", messages="full")):
+        assert line["message"] == MESSAGE[:500]
+        assert line["answer"] == ANSWER[:500]
+
+
+def test_app_judges_use_the_apps_log_privacy(caplog):
+    caplog.set_level(logging.INFO)
+    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.9)]))
+    app = app_for(
+        route_to("knowledge"), judge_enabled=True, judge_model=model,
+        log_privacy=LogPrivacy(key=b"k", messages="none"),
+    )
+    post(TestClient(app), message="meu cpf é 123.456.789-09")
+
+    judged = [j for _, j in lines(caplog, "judge")]
+    assert len(judged) == 2
+    assert all("message" not in j and j["message_length"] == len("meu cpf é 123.456.789-09") for j in judged)
