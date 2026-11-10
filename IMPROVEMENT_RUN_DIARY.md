@@ -68,4 +68,11 @@ Decisions:
 - Human takeover as a Conversation Mode, not `interrupt()` (ADR 0006).
 - B specs written up front, while the reasoning was fresh; their tickets are written when each feature starts, against the code as it is then.
 
+Scenario runs (ticket 04, live compose stack, `scripts/scenarios.py`):
+
+- 20:12, first run: routing 13/13, facts 6/7. [8] decline error missed `expired`: reply named only the latest decline (R$ 24,80, insufficient funds, today), a defensible answer to a present-tense question. Fact over-specified; changed to the latest decline's reason + amount.
+- 20:14, rerun: routing 13/13, facts 7/7, exit 0.
+- After code review, tightened facts: [4] dropped bare `chave`; [9] `48` → `48 installments`/`48x`/…; [8] added issuer hint (`issuer`/`emissor`). [8]'s revision was written after seeing a reply, so it's post-hoc.
+- 20:20, third run: routing 13/13, facts 5/7, exit 1. [3] gave dates but no amounts (amount facts kept: the reply should state what lands). [9] `search_corpus` ×3, "couldn't find a confirmed installment limit", although the Corpus says 48x. Retrieval is nondeterministic: it passed in the two earlier runs.
+
 Next: implement `improvement-fixes` ticket by ticket, starting with 01 (CI).
