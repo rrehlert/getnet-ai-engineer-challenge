@@ -44,6 +44,10 @@ _Avoid_: Passage, snippet, document
 A page (URL and title) that a retrieval or web search tool actually returned and that supports an answer. Sources are never taken from model-written text.
 _Avoid_: Citation, reference, link
 
+**Evidence**:
+The tool output an Agent actually saw while answering a Message: the Chunks a search returned or the account data a tool returned. A Source names where something came from; Evidence is what it said. Judges rate replies against Evidence.
+_Avoid_: Context, grounding, retrieved docs
+
 ## Merchant account
 
 **Settlement**:
