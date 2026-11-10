@@ -19,14 +19,14 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Each pattern (formatted and bare) is masked in captured log output; raw values absent
-- [ ] BRL amounts, ISO dates, `trace_id` and Terminal ids survive
-- [ ] Non-Luhn digit runs of card length are not masked as cards
-- [ ] Exception text in an error line is redacted
-- [ ] Judge reason is redacted
-- [ ] `user_ref`: same id + key gives the same ref, different keys differ, raw user id absent from the request line
-- [ ] Warning when `LOG_HASH_KEY` is empty
-- [ ] `LOG_MESSAGES` modes behave as specified on the request line
-- [ ] `.env.example` updated
+- [x] Each pattern (formatted and bare) is masked in captured log output; raw values absent
+- [x] BRL amounts, ISO dates, `trace_id` and Terminal ids survive
+- [x] Non-Luhn digit runs of card length are not masked as cards
+- [x] Exception text in an error line is redacted
+- [x] Judge reason is redacted
+- [x] `user_ref`: same id + key gives the same ref, different keys differ, raw user id absent from the request line
+- [x] Warning when `LOG_HASH_KEY` is empty
+- [x] `LOG_MESSAGES` modes behave as specified on the request line
+- [x] `.env.example` updated
