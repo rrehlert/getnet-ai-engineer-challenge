@@ -61,7 +61,7 @@ _Avoid_: Machine, POS, maquininha, device
 ## Quality
 
 **Judge Type**:
-The aspect an LLM judge rates after a reply is sent. `route` asks whether the Intent was right. `answer` asks whether the reply is good for that Intent.
+The aspect an LLM judge rates after a reply is sent. `route` asks whether the Intent was right. `answer` asks whether every claim in the reply is supported by the Evidence and the reply answers the Message.
 _Avoid_: Judge kind, eval category
 
 **Judge Score**:

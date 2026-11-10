@@ -1,8 +1,12 @@
 # Getnet Multi-Agent Support
 
+[![CI](https://github.com/rrehlert/getnet-ai-engineer-challenge/actions/workflows/ci.yml/badge.svg)](https://github.com/rrehlert/getnet-ai-engineer-challenge/actions/workflows/ci.yml)
+
 A containerized multi-agent support assistant for Getnet merchants. A **Router Agent** classifies each Message by Intent. It then hands the Message to a **Knowledge Agent** (RAG over Getnet's public site plus web search) or a **Customer Support Agent** (tools over mock account data), or refuses it itself.
 
 Domain vocabulary is in [`GLOSSARY.md`](GLOSSARY.md). Architecture decisions are in [`docs/adr/`](docs/adr/). The spec and tickets are in [`.scratch/getnet-multi-agent/`](.scratch/getnet-multi-agent/).
+
+After the evaluation, an improvement run fixed several weak spots (Judge Evidence and model, scenario facts, log privacy, container, CI). Its spec is [`.scratch/improvement-fixes/`](.scratch/improvement-fixes/), and its clock, sessions and decisions are in [`IMPROVEMENT_RUN_DIARY.md`](IMPROVEMENT_RUN_DIARY.md).
 
 ## Quick start
 
@@ -10,6 +14,8 @@ Domain vocabulary is in [`GLOSSARY.md`](GLOSSARY.md). Architecture decisions are
 cp .env.example .env        # set OPENAI_API_KEY (an OpenRouter key by default)
 docker compose up --build   # builds the image, builds the RAG index at startup, serves on :8000
 ```
+
+The container runs as a non-root user (`app`, uid 10001). The index lives on the named volume `chroma`, so recreating the container reuses it; it is rebuilt only when the Corpus, embedding model or chunking settings change. `docker compose down -v` deletes it.
 
 `/health` returns `{"status":"ok"}` once the index is ready. Until then it returns 503 `{"status":"starting"}`. The compose healthcheck waits for it.
 
@@ -75,9 +81,11 @@ POST /chat {message, user_id}
   - Provider errors or rate limits, from any provider, after retries → 503 `{error:{code,message}, trace_id}`.
   - Unexpected errors → 500 with a generic message.
   - Unsupported Messages and unknown users are normal 200 responses.
-- **Observability** (`app/observability.py`, `app/judge.py`). One JSON log line per request: `trace_id, user_id, message, intent, agent, tools, tokens, latency_ms, outcome`. When `JUDGE_ENABLED`, two background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
+- **Observability** (`app/observability.py`, `app/judge.py`, `app/redact.py`). One JSON log line per request: `trace_id, user_ref, message, intent, agent, tools, tokens, latency_ms, outcome` (`message_length` instead of `message` when `LOG_MESSAGES=none`). All log output is redacted (see [Privacy](#privacy)). When `JUDGE_ENABLED`, two background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
   - `route`: was the Intent right?
-  - `answer`: is the reply good for that Intent?
+  - `answer`: is every claim in the reply supported by the **Evidence**, and does it answer the Message? Evidence is the tool output the specialist Agent actually saw (`search_corpus`/`web_search` results, including Chunks below the threshold, or the account tool data), capped at 6,000 characters with a truncation marker. It stays in graph state and is not returned by `/chat`.
+
+  A Judge line carries `judge_type, trace_id, intent, judge_score, reason` plus the `message` and `answer` it scored (same `LOG_MESSAGES` mode and 500-character cap as the request line), so it can be read on its own. The Judges run on `JUDGE_MODEL`, by default a different model family from `LLM_MODEL`; a warning is logged at startup if they are equal.
 
 ## Design choices
 
@@ -96,13 +104,14 @@ POST /chat {message, user_id}
 - **Knowledge Agent:** `search_corpus` and `web_search` tools. They return `(content, artifact)`, so the model reads the text while the code keeps the structured Sources.
 - **Customer Support Agent:** 3 tools: `get_settlement_schedule`, `get_terminal_status` and `get_recent_transactions`. `user_id` is injected through `ToolRuntime` context, not passed as a tool argument, so the model cannot be talked into reading another Merchant's account.
 - **Middleware:** `ToolCallLimitMiddleware` caps tool calls, and `dynamic_prompt` adds today's date and the Merchant context to the prompt.
-- **Judges:** structured output (`Verdict`: score + reason).
+- **Judges:** structured output (`Verdict`: score + reason). The tool outputs are also kept as Evidence for the `answer` Judge.
 
 ## Guardrails and reliability
 
 - **Scope guardrail:** the Router's `unsupported` Intent catches off-topic requests, attempts to read another Merchant's data, prompt injection ("ignore your instructions…") and harmful requests. It replies with a polite refusal in the Message's language and calls no tools.
 - **Data isolation:** `user_id` lives in the tool runtime context, not the prompt. An unknown user gets an agent with no tools.
-- **Grounding:** Sources come only from tool artifacts and are filtered by the relevance threshold.
+- **Grounding:** Sources come only from tool artifacts and are filtered by the relevance threshold. The `answer` Judge checks claims against the Evidence.
+- **Log privacy:** personal data is masked in every log line and the user id is pseudonymized (see [Privacy](#privacy)).
 - **Bounded cost:** tool-call and recursion limits; chat model `timeout=30s`, `max_retries=2`.
 - **Graceful failure:**
   - output the Router can't parse falls back to `knowledge`;
@@ -110,12 +119,43 @@ POST /chat {message, user_id}
   - provider errors or rate limits return a 503 with a `trace_id`;
   - Judge failures are logged and never affect the response.
 
+## Privacy
+
+Merchants type personal data into Messages, so no log line writes it in clear text.
+
+- **One redactor** (`app/redact.py`), applied centrally: to every structured event before it is written, and to every other log line and exception text in the JSON formatter. Judge prompts also ask the Judge not to quote personal data in its `reason`, which is redacted anyway.
+- **Masked**, with typed placeholders; longer identifiers are matched before shorter ones (CNPJ before CPF, card before phone):
+
+  | Data | Placeholder |
+  |---|---|
+  | CNPJ, formatted or 14 bare digits | `[CNPJ]` |
+  | CPF, formatted or 11 bare digits | `[CPF]` |
+  | card numbers, 13–19 digits, optionally grouped by spaces or dashes, only when Luhn-valid | `[CARD]` |
+  | email addresses | `[EMAIL]` |
+  | Brazilian phone numbers | `[PHONE]` |
+  | Pix random keys (UUID with dashes) | `[PIX_KEY]` |
+
+  BRL amounts, ISO dates, `trace_id`s and Terminal ids are left intact.
+- **Pseudonymized user id.** The request line has `user_ref` instead of `user_id`: a keyed HMAC-SHA256 of the user id, first 16 hex characters, keyed by `LOG_HASH_KEY`. The same Merchant always gets the same ref (so events can be correlated), and without the key it can't be reversed by hashing every possible id. If `LOG_HASH_KEY` is empty, a random key is generated at startup with a warning, and refs change on every restart.
+- **Logging modes** (`LOG_MESSAGES`), for the Message on the request line and the Message and reply on Judge lines:
+
+  | Mode | Logged |
+  |---|---|
+  | `none` | only the length (`message_length`, `answer_length`) |
+  | `redacted` (default) | redacted text, capped at 500 characters |
+  | `full` | raw text, capped at 500 characters (local debugging only) |
+
+  Even under `full`, other fields and non-event lines are still redacted.
+
+Tool outputs (account data) are never logged. The mock fixture itself holds mock personal data, which is out of scope.
+
 ## Evaluation and observability strategy
 
 **Implemented:**
 - One structured JSON log line per request, with a `trace_id` that is also returned to the client.
-- Two online LLM Judges (`route`, `answer`) that score live traffic in the background. A score below 0.7 is logged at WARNING.
-- `scripts/scenarios.py` as a small labelled eval set: 13 Messages with expected Intents.
+- Two online LLM Judges (`route`, `answer`) that score live traffic in the background, on a model from a different family than the reply model. The `answer` Judge rates the reply against the Evidence. A score below 0.7 is logged at WARNING.
+- `scripts/scenarios.py` as a small labelled eval set: 13 Messages with expected Intents, 7 of them with expected facts. Routing accuracy and fact accuracy are reported separately.
+- CI on every push and pull request: the test suite and a container smoke test.
 
 **Production plan (not implemented):**
 - **Dashboards** built from the log lines:
@@ -145,7 +185,8 @@ POST /chat {message, user_id}
 | RAG | trafilatura + lxml (ingestion), `langchain-text-splitters`, fastembed (local multilingual embeddings), Chroma (persistent, cosine) |
 | Web search | Tavily (`langchain-tavily`), DuckDuckGo (`ddgs`) fallback |
 | Tests | pytest, FastAPI TestClient, scripted fake chat models (no real LLM calls) |
-| Packaging | Docker + docker compose (embedding model baked into the image; index built at startup) |
+| Packaging | Docker + docker compose (non-root user; embedding model baked into the image; index built at startup on a named volume) |
+| CI | GitHub Actions: pytest + compose smoke test, no secrets |
 
 ## Configuration
 
@@ -158,10 +199,12 @@ All configuration is in env vars (see [`.env.example`](.env.example)). Never com
 | `OPENAI_BASE_URL` | `https://openrouter.ai/api/v1` | |
 | `TAVILY_API_KEY` | empty | optional; DuckDuckGo is used when empty or on failure |
 | `JUDGE_ENABLED` | `true` in compose | off in tests |
-| `JUDGE_MODEL` | = `LLM_MODEL` | |
+| `JUDGE_MODEL` | `openai:anthropic/claude-haiku-5.5` | a different family from `LLM_MODEL` for independent Judge Scores; a startup warning is logged if they are equal |
 | `RELEVANCE_THRESHOLD` | `0.5` | minimum cosine similarity for a Chunk to count as a Source |
 | `PORT` | `8000` | |
-| `CHROMA_DIR` | `chroma` | persistent index directory |
+| `CHROMA_DIR` | `chroma` | persistent index directory (in compose, the named volume `chroma` at `/app/chroma`) |
+| `LOG_HASH_KEY` | empty | key for the `user_ref` HMAC in logs; empty means a random key per process, with a warning (refs change on restart) |
+| `LOG_MESSAGES` | `redacted` | how much Message/reply text is logged; see [Privacy](#privacy) |
 
 ## Examples to test
 
@@ -206,11 +249,20 @@ Example response:
 }
 ```
 
-To run all 10 example Messages from the challenge plus 3 Router edge cases, and get a ✓/✗ for each expected Intent:
+To run all 10 example Messages from the challenge plus 3 Router edge cases, checking the expected Intent and, where declared, the expected facts in the reply:
 
 ```bash
 uv run python scripts/scenarios.py            # or: scripts/scenarios.py http://host:port
 ```
+
+Each scenario prints a routing mark and a facts mark (`✓`, `✗`, or `-` when it declares no facts), then the Intent, agent, steps, `trace_id`, answer, Sources and any missing facts. The report ends with two separate totals:
+
+```
+routing 13/13
+facts 7/7
+```
+
+followed by the missing facts per scenario. A fact is a list of accepted alternatives, matched as case-insensitive substrings (e.g. an amount matches as `1.817,26`, `1817,26`, `1,817.26` or `1817.26`). Customer Support facts come from the fixture; Knowledge facts only where the fact is stable in the Corpus; refusals and web-search scenarios have none. The exit code is non-zero if routing or facts are below 100%.
 
 Mock merchants:
 - **`cliente1988`** has pending Settlements from yesterday, an offline Terminal (weak Wi-Fi) and recent declines (codes 51 and 54).
@@ -233,7 +285,7 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 62 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 124 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
@@ -242,10 +294,18 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
   - an unknown user triggers no tool call.
 - **RAG:** chunking, the title prefix, threshold filtering, collection-name hashing.
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
-- **Observability:** the log line fields, and Judge scoring/flagging.
+- **Observability:** the log line fields, Judge scoring/flagging, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
+- **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
+- **Scenario checking:** the pure function that scores routing and facts.
 - **Ingestion:** the extraction XPath, on saved HTML fixtures.
 
-**2. End-to-end scenarios (`scripts/scenarios.py`).** These run against the real container and the real LLM: the 10 challenge Messages plus 3 Router edge cases (prompt injection, another Merchant's data, a Portuguese Message). Each gets a ✓/✗ on the expected Intent, and the answers and Sources are printed for review. The current result is 13/13.
+**2. End-to-end scenarios (`scripts/scenarios.py`).** These run against the real container and the real LLM: the 10 challenge Messages plus 3 Router edge cases (prompt injection, another Merchant's data, a Portuguese Message). Each gets a ✓/✗ on the expected Intent and on its expected facts, and the answers and Sources are printed for review. Routing is consistently 13/13; facts vary between runs (6/7, 7/7 and 5/7 so far, the first before a fact was corrected; see the diary), mostly from nondeterministic retrieval.
+
+**CI (`.github/workflows/ci.yml`).** On every push and pull request (changes only under `.scratch/`, `docs/` or to the diary are skipped):
+- `test`: `uv sync --locked`, then `uv run pytest`;
+- `smoke`: `docker compose up -d --build`, wait up to 300 s for `/health` = 200, POST `{}` to `/chat` and expect 422, print logs on failure, always `docker compose down -v`.
+
+It uses no secrets: the app starts and builds its index without an LLM key, and `/chat` is never called with a valid body, so CI makes no LLM calls.
 
 **3. How I'd approach full integration testing:**
 - **Orchestration contract tests:** run the real graph with a real model and assert on structure, not wording:
@@ -254,11 +314,11 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
   - Sources are non-empty for corpus questions;
   - no Support tool is called for another or unknown `user_id`;
   - the reply is in the Message's language.
-- **Golden dataset + LLM-as-judge:** a versioned set of labelled cases, scored by the same `route`/`answer` Judges plus a groundedness check (are the claims supported by the retrieved Chunks?). Set thresholds on the aggregate scores rather than exact strings, to absorb LLM nondeterminism. Run each case a few times and track the pass rate.
+- **Golden dataset + LLM-as-judge:** a versioned set of labelled cases, scored by the same `route`/`answer` Judges plus the Evidence-based groundedness check, run offline over the set. Set thresholds on the aggregate scores rather than exact strings, to absorb LLM nondeterminism. Run each case a few times and track the pass rate.
 - **Retrieval evaluation:** for each corpus question, the expected page URL(s), measured with hit@k and MRR. This isolates RAG regressions from generation regressions.
 - **Adversarial suite:** prompt injection, cross-Merchant access, PII fishing, off-topic and harmful requests, all expected to end as `unsupported` with no tool calls.
 - **Failure injection:** a stubbed provider that times out, returns 429 or returns malformed tool calls, plus an empty corpus and web search being down. Assert the documented 503/fallback behaviour.
-- **Docker smoke test in CI:** `docker compose up`, wait for `/health`, run the scenarios, tear down. Unit tests run on every push. The paid LLM suites run on prompt, model or corpus changes and nightly.
+- **Scenarios in CI:** the smoke test already exists (above); next, run the scenarios against it with an LLM key. The paid LLM suites run on prompt, model or corpus changes and nightly.
 
 ## Folder structure
 
@@ -273,8 +333,9 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 │   ├── agents.py           # pieces shared by agents (language rule, tokens/steps summary)
 │   ├── rag.py              # corpus loading, chunking, fastembed, Chroma index
 │   ├── llm.py              # chat model factory + provider-error classification
-│   ├── judge.py            # route / answer LLM judges
-│   ├── observability.py    # JSON log lines
+│   ├── judge.py            # route / answer LLM judges (answer rated against Evidence)
+│   ├── observability.py    # JSON log lines, user_ref, LOG_MESSAGES modes
+│   ├── redact.py           # personal-data redactor for all log output
 │   └── settings.py         # pydantic-settings (env vars)
 ├── corpus/                 # committed Getnet pages as markdown with url/lang/title front matter
 ├── data/merchants.json     # mock Merchant accounts (dates relative to today)
@@ -285,7 +346,10 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 ├── docs/
 │   ├── adr/                # architecture decision records
 │   └── agents/             # config for the agent skills (issue tracker, labels, domain docs)
+├── .github/workflows/ci.yml  # tests + container smoke test
 ├── .scratch/getnet-multi-agent/  # spec.md + tickets (local issue tracker)
+├── .scratch/improvement-fixes/   # improvement run: fixes spec + tickets
+├── IMPROVEMENT_RUN_DIARY.md  # improvement run: clock, sessions, decisions, scenario results
 ├── GLOSSARY.md             # domain vocabulary
 ├── Dockerfile, docker-compose.yml, .env.example
 └── pyproject.toml, uv.lock
@@ -320,7 +384,7 @@ The README (`11`, `12`) and the video came after the timebox.
 - **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it.
 - **Sources:** they can be noisy (every Chunk above the threshold from every search), so filter them to the ones the answer uses.
 - **`steps`:** it counts tool calls that the limit blocked.
-- **Answer Judge vs. web search:** the Judge sees only the answer and the Source URLs/titles, not what the tools returned. So it misreads web Sources as documents. Example: for the weather question it said a climate website had nothing to do with weather. Fix: pass the tool results (or snippets) to the Judge and tell it to judge grounding against them, not the Source titles.
+- ~~**Answer Judge vs. web search:** the Judge sees only the answer and the Source URLs/titles, not what the tools returned, and runs on the same model that wrote the reply.~~ **Fixed** in the improvement run: the `answer` Judge now rates the reply against the Evidence (capped tool output), and `JUDGE_MODEL` defaults to a different model family. Remaining: the Judges are not calibrated against human labels.
 - **Chroma:** old hash-named collections are never pruned.
 - **Out of scope:** multi-turn memory, real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
 - **Other bonuses (designed, not built):**
