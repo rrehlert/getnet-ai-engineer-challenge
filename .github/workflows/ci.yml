@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest
+
+  smoke:
+    # No secrets: the app must build and start (and build its index) without an LLM key.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PORT: 8000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start stack
+        run: docker compose up -d --build
+      - name: Wait for /health = 200 (max 300s)
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/health" || true)
+            echo "attempt $i: /health -> $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 5
+          done
+          echo "/health did not return 200 within 300s"
+          exit 1
+      - name: Empty /chat body returns 422
+        run: |
+          code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' -d '{}' "http://localhost:${PORT}/chat" || true)
+          echo "/chat {} -> $code"
+          [ "$code" = "422" ]
+      - name: Show logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
