@@ -47,7 +47,7 @@ def test_request_log_line_has_spec_fields(caplog):
 
     [(_, line)] = lines(caplog, "request")
     assert line["trace_id"] == body["trace_id"]
-    assert line["user_id"] == "cliente1988"
+    assert "user_id" not in line and len(line["user_ref"]) == 16
     assert line["message"] == "x" * 500
     assert line["intent"] == "knowledge"
     assert line["agent"] == "knowledge"

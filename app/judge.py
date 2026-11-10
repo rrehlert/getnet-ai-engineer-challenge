@@ -28,6 +28,11 @@ class Verdict(BaseModel):
     reason: str = Field(description="One short sentence explaining the score.")
 
 
+# Reasons are logged (and redacted regardless); keep personal data out of them in the first place.
+NO_PERSONAL_DATA = (
+    "\nIn your reason, do not quote personal data (CPF, CNPJ, card numbers, emails, phone numbers, Pix keys)."
+)
+
 ROUTE_PROMPT = (
     """You judge the Router of Getnet merchant support. Score it against this routing policy
 exactly, not your own view of what is in scope:
@@ -39,6 +44,7 @@ exactly, not your own view of what is in scope:
 The Merchant is the user id given; a Message asking about any other user id is another
 merchant's data. Refusing must be warranted. Was the chosen Intent right under this
 policy? Score 0-1."""
+    + NO_PERSONAL_DATA
 )
 
 ANSWER_RUBRICS = {
@@ -53,7 +59,7 @@ ANSWER_RUBRICS = {
 ANSWER_PROMPT = """You judge a reply from Getnet merchant support.
 Evidence is the tool output the Agent actually saw while answering. A claim that the
 Evidence does not support counts against the reply, however plausible it sounds.
-Rubric for Intent '{intent}': {rubric} Score 0-1."""
+Rubric for Intent '{intent}': {rubric} Score 0-1.""" + NO_PERSONAL_DATA
 
 
 def format_evidence(evidence: Sequence[Evidence]) -> str:

@@ -1,9 +1,13 @@
 import logging
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 log = logging.getLogger(__name__)
+
+# How the request line logs the Message: `none` (length only), `redacted`, or `full` (raw, still capped).
+MessageMode = Literal["none", "redacted", "full"]
 
 
 class Settings(BaseSettings):
@@ -23,6 +27,9 @@ class Settings(BaseSettings):
     port: int = 8000
     # Persistent Chroma index (gitignored; built at startup, not baked into the image).
     chroma_dir: str = "chroma"
+    # HMAC key for `user_ref` in logs; empty means a random key per process (refs don't match across restarts).
+    log_hash_key: str = ""
+    log_messages: MessageMode = "redacted"
 
 
 def warn_if_judge_not_independent(settings: Settings) -> None:

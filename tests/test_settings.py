@@ -14,6 +14,8 @@ ENV_VARS = [
     "RELEVANCE_THRESHOLD",
     "PORT",
     "CHROMA_DIR",
+    "LOG_HASH_KEY",
+    "LOG_MESSAGES",
 ]
 
 
@@ -36,6 +38,8 @@ def test_defaults_match_spec(clean_env):
     assert settings.relevance_threshold == 0.5
     assert settings.port == 8000
     assert settings.chroma_dir == "chroma"
+    assert settings.log_hash_key == ""
+    assert settings.log_messages == "redacted"
 
 
 def test_judge_model_does_not_follow_llm_model(clean_env):

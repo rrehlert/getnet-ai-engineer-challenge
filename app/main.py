@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from app.graph import Agent, Intent, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
-from app.observability import log_request, setup_logging
+from app.observability import LogPrivacy, log_request, setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -69,12 +69,16 @@ def create_app(
     load_index: Callable[[], Any] | None = None,
     judge_enabled: bool | None = None,
     judge_model: Any = None,
+    log_privacy: LogPrivacy | None = None,
 ) -> FastAPI:
     """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted.
 
     Judges run after a 200 when `judge_enabled` (default: `JUDGE_ENABLED`);
     `judge_model` defaults to `JUDGE_MODEL` via the model factory; at startup a
     warning is logged if that equals `LLM_MODEL`.
+
+    `log_privacy` defaults to `LOG_HASH_KEY` / `LOG_MESSAGES`; an empty key is
+    replaced by a random one, with a warning.
 
     `load_index` runs in a background thread at startup; until it returns,
     `/health` and `/chat` answer 503. Without it there is no index to wait for.
@@ -97,6 +101,11 @@ def create_app(
             app.state.index_thread = threading.Thread(target=_load, name="index", daemon=True)
             app.state.index_thread.start()
         yield
+
+    if log_privacy is None:
+        from app.settings import get_settings
+
+        log_privacy = LogPrivacy.from_settings(get_settings())
 
     app = FastAPI(title="Getnet Multi-Agent Support", lifespan=lifespan)
     app.state.graph = graph
@@ -153,6 +162,7 @@ def create_app(
 
         def log_outcome(outcome: str, result: dict | None = None) -> None:
             log_request(
+                privacy=log_privacy,
                 trace_id=trace_id,
                 user_id=request.user_id,
                 message=request.message,
