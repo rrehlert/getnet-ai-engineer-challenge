@@ -7,7 +7,7 @@
 
 **Blocked by:** 04, 05
 
-**Status:** ready-for-human
+**Status:** done
 
-- [ ] Baseline committed
-- [ ] Summary in `IMPROVEMENT_RUN_DIARY.md`
+- [x] Baseline committed
+- [x] Summary in `IMPROVEMENT_RUN_DIARY.md`

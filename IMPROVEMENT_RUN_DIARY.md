@@ -138,3 +138,23 @@ Live check (rebuilt compose stack, Judges on; the running image had been from 11
 Checkpoint evals: none beyond the live check; the eval runner is ticket 03.
 
 Next: `eval-expansion` 03 (eval runner) with the ticket 03 notes, then 04–06.
+
+Off the clock: `eval-expansion` 03 (`0ae8c99`, `3a443dd`), 04 (`1fdce61`), 05 (`ba2aa4f`), each closed with a green CI run.
+
+#### Live baseline (ticket 06)
+
+Ran `uv run python -m scripts.eval --save-baseline` on `ad0769b` (clean tree), started 20:40:58 (23:40:58Z). That run is saved as `evals/baseline.json`.
+
+- Models: reply `openai:openai/gpt-6-luna`, Judge `openai:anthropic/claude-haiku-5.5`. 3 runs × 17 scenarios = 51 runs, 0 errors.
+- Routing 100% (Mixed questions accept any needed Intent). Facts 82%. Judge mean/min: answer 0.44/0.00, coverage 0.81/0.20, route 0.91/0.20.
+- Per Intent: knowledge facts 67%, answer 0.40. Support facts 88%, answer 0.33, route 0.81. Unsupported: all 1.00.
+- Mixed questions 12/51 = 24% (threshold ≥10%). Incomplete 11/12 = 92% (threshold ≥50%). Verdict: **build multi-intent Router**. The coverage Judge agreed with the labelled Mixed scenarios 12/12.
+- recall@4 12/14 = 86%. The 2 misses: "Como habilitar o recebimento de vendas via Pix no aplicativo" (the Pix sale page ranked above it) and "Quais as taxas da maquininha Getnet" (`/duvidas/taxas/` was not in the top 4).
+- Tokens: 160,120.
+
+Notable misses:
+
+- 09 installments: the facts check failed 3/3 because "48 installments" was missing. The reply said no source was found, and the answer Judge still gave 1.0, so honest "not found" replies get full answer marks.
+- 14 Caixa 1 offline + Wi-Fi (Mixed): routed to `knowledge` 2/3. Facts failed 2/3 because "2.4 GHz" was missing. route Judge 0.2–0.3.
+- 13 and 17 (PT support, payout amounts): answer 0.0 on all 3 runs. In 17 the Judge flags a real error: the reply says credit "cai até o fim do dia", but it is scheduled D+30.
+- The answer Judge looks harsh: 0.0 on 02 (weather), 05 (offline machine) and 16, even when facts pass. Its reasons often penalise omissions, which is the coverage Judge's job. This is a candidate for tightening the answer Judge prompt.
