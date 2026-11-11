@@ -5,3 +5,7 @@
 **Blocked by:** 06
 
 **Status:** ready-for-agent
+
+## Comments
+
+2026-11-11, from 03 review: README must say the results file (and so the committed baseline) holds raw Messages and replies, unredacted, unlike the logs. Fine while the eval only uses fixture Merchants (`data/merchants.json`); with real Merchant data, commit only aggregates and keep runs in a gitignored file. Run with `uv run python -m scripts.eval`.

@@ -77,6 +77,25 @@ def test_summarize_counts_failed_runs_as_failures():
     assert stats["fact_pass_rate"] == 0.5
 
 
+def test_summarize_counts_missing_verdicts_per_judge_type():
+    records = [
+        record(scores={"route": 1.0, "answer": 1.0}, coverage=(["knowledge"], True)),
+        record(scores={"route": 1.0}, coverage=(["knowledge"], True)),  # answer Judge failed
+        record(scores={}),  # every Judge failed
+        record(error="rate_limited"),  # graph failed: no Judges ran, nothing missing
+    ]
+
+    assert summarize(records)["judges_missing"] == {"route": 1, "answer": 2, "coverage": 1}
+
+
+def test_summary_shows_missing_verdicts_only_when_some_are_missing(tmp_path):
+    _, results = run(tmp_path)
+    assert "missing verdicts" not in format_summary(results)
+
+    results["overall"]["judges_missing"]["answer"] = 2
+    assert "missing verdicts: answer 2" in format_summary(results)
+
+
 def test_summarize_without_facts_or_judges_reports_none():
     stats = summarize([record(facts_ok=None)])
 

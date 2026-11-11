@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.judge import run_judges
+from app.judge import JUDGES, run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy
 from scripts.scenarios import DATASET, Scenario, check_reply, load_scenarios
@@ -48,7 +48,10 @@ def summarize(records: list[Record]) -> dict:
     """Pass rates, Judge Score mean/min per Judge Type, errors and tokens over some runs.
 
     A failed run fails routing and (if the scenario declares facts) facts; it has no verdicts.
+    `judges_missing` counts runs that answered but lack a Judge Type's verdict (that Judge failed),
+    so means over a biased subset don't pass unnoticed.
     """
+    answered = [r for r in records if r["error"] is None]
     with_facts = [r["facts_ok"] for r in records if r["facts_ok"] is not None]
     scores: dict[str, list[float]] = defaultdict(list)
     for r in records:
@@ -62,6 +65,9 @@ def summarize(records: list[Record]) -> dict:
         "judges": {
             judge_type: {"mean": sum(values) / len(values), "min": min(values), "n": len(values)}
             for judge_type, values in scores.items()
+        },
+        "judges_missing": {
+            judge_type: sum(judge_type not in r["verdicts"] for r in answered) for judge_type in JUDGES
         },
         "tokens": sum(r["tokens"] for r in records),
     }
@@ -283,6 +289,9 @@ def format_summary(results: dict) -> str:
     lines = ["Judge Scores as mean/min", ""]
     lines += [_summary_row(intent, stats) for intent, stats in sorted(results["per_intent"].items())]
     lines.append(_summary_row("overall", results["overall"]))
+    missing = {t: n for t, n in results["overall"]["judges_missing"].items() if n}
+    if missing:
+        lines.append("missing verdicts: " + ", ".join(f"{t} {n}" for t, n in missing.items()))
     lines += [
         "",
         f"Mixed questions {mixed['mixed']}/{mixed['judged']} = {_pct(mixed['mixed_rate'])}"

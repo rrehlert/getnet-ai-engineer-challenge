@@ -32,3 +32,11 @@
 - The `route` Judge marks the Router down for not picking both Intents (0.4, then 0.0), which overlaps with `coverage`. Add a rule to `ROUTE_PROMPT`: for a Mixed question, choosing one of the needed Intents is correct.
 - The coverage Judge behaved as intended: mixed → `intents_needed: [support, knowledge]`, `fully_answered: false`, 0.4; Pix question → `[knowledge]`, fully answered, 1.0.
 - `answer` gave 0.0 to the Pix reply for opening with "Yes" (the Corpus says a Pix key linked to the receiving account). Possibly harsh; check in the baseline whether it's a pattern.
+
+2026-11-11, review decisions:
+
+- Results file keeps raw `message`/`answer` (fixture data only; README note on 07).
+- Judge failures: `judges_missing` per Judge Type (answered runs lacking a verdict), printed when non-zero.
+- Failed runs count as routing/fact failures; errors reported alongside.
+- Labelled-mixed agreement = exact set match; revisit if 06 shows disagreements are mostly extra Intents.
+- Scenario id = hash of the Message (stable for the 04 baseline join); position kept as `index`.
