@@ -38,6 +38,7 @@ Decisions adopted at the start:
 | Session | Start | Stop | Duration | Cumulative | Tags |
 |---|---|---|---|---|---|
 | 1 | 2026-11-10 19:13:42 | 20:45:52 | 1h32m10s | 1h32m10s | `improve-s1-start`, `improve-s1-stop` |
+| 2 | 2026-11-11 19:46:30 | 20:04:49 | 18m19s | 1h50m29s | `improve-s2-start`, `improve-s2-stop` |
 
 ## Checkpoints
 
@@ -47,6 +48,7 @@ Decisions adopted at the start:
 | `improve+30m` | `ebb6deb` | 0h27m | Spec, tickets, B specs/ADRs; CI workflow (ticket 01, not yet green) |
 | `improve+60m` | `9aa02b2` | 0h53m | Tickets 01, 02 done; 03 implemented (marked done at `f926a78`) |
 | `improve+90m`, `improve-s1-stop` | `d38faf7` | 1h32m | `improvement-fixes` 01–06 done (CI green). Scenarios: routing 13/13, facts 5/7 (ticket 04, 20:20) |
+| `improve-s2-stop` | `f09a1ed` | 1h50m | `eval-expansion` tickets; 01 (shared scenario dataset, 4 Mixed questions) and 02 (coverage Judge) done, CI green. Live check: coverage Judge on 2 Messages (below) |
 
 ## Sessions
 
@@ -104,3 +106,35 @@ Off the clock: ticket 07 README (`0dd3c7a`, `c432ea9`, 20:49:49): config table, 
 Checkpoint evals: only the ticket 04 scenario runs above (20:12–20:20); no separate eval run at +30m/+60m/+90m.
 
 Next: `eval-expansion` (B1): write its tickets against the current code, then implement.
+
+### Session 2 — 2026-11-11
+
+Goal: `eval-expansion` tickets, then 01 and 02.
+
+Done (clock started 19:46:30, tag on `22e087c`):
+
+| Time | Commit | What |
+|---|---|---|
+| 19:47:17 | `0df12cf` | `eval-expansion` tickets 01–07; `evals/results/` gitignored |
+| — | `266147c` | Spec status back to canonical `ready-for-agent` |
+| 19:50:23 | `5e1e314` | 01: scenarios in `evals/scenarios.json` (13 original + 4 Mixed), validating loader; glossary: Mixed question |
+| — | `046ad4d` | 01: import order |
+| 19:52:03 | `7dcfd1a` | 02: `coverage` Judge Type; `run_judges` returns verdicts; glossary |
+| 20:04:49 | `f09a1ed` | 01, 02 done (CI run 43116743942); live-check notes on ticket 03. **Clock stop** |
+
+Decisions:
+
+- The 13 original scenarios were checked identical to the old inline list by a one-off script (not a test: CI's shallow checkout has no history).
+- `scripts/scenarios.py` keeps its own copy of the Intent values (test-synced) so it runs without importing `app`.
+- Coverage Judge: `fully_answered` forces score 1 and empty `missing`.
+- `--retrieval-only` added to ticket 05 (recall@4 needs no LLM key).
+
+Live check (rebuilt compose stack, Judges on; the running image had been from 11-10 20:39, before ticket 06):
+
+- Caixa 1 offline + Wi-Fi setup (Mixed): Router → `knowledge` (on 11-10, old image: `support`). Judges: route 0.0, answer 0.0, coverage 0.4 with `intents_needed: [support, knowledge]`, `fully_answered: false`, missing the terminal status check.
+- Pix bank account: route 1.0, answer 0.0 (reply opened with "Yes"; Corpus only says a Pix key linked to the receiving account), coverage 1.0 fully answered.
+- Follow-ups recorded on ticket 03: accept any needed Intent as routing-correct for Mixed scenarios; tell the `route` Judge that one needed Intent is correct for a Mixed question; watch `answer` harshness in the baseline.
+
+Checkpoint evals: none beyond the live check; the eval runner is ticket 03.
+
+Next: `eval-expansion` 03 (eval runner) with the ticket 03 notes, then 04–06.
