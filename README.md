@@ -258,7 +258,7 @@ To run the shared scenario dataset (the 10 example Messages from the challenge, 
 uv run python scripts/scenarios.py            # or: scripts/scenarios.py http://host:port
 ```
 
-Each scenario prints a routing mark and a facts mark (`✓`, `✗`, or `-` when it declares no facts), then the Intent, agent, steps, `trace_id`, answer, Sources and any missing facts. The report ends with two separate totals:
+Each scenario prints a routing mark and a facts mark (`✓`, `✗`, or `-` when it declares no facts), then the Intent, agent, steps, `trace_id`, answer, Sources and any missing facts. The report ends with two separate totals (here, an all-pass run):
 
 ```
 routing 17/17
@@ -282,7 +282,7 @@ uv run python -m scripts.eval --save-baseline    # also copy this run over evals
 uv run python -m scripts.eval --retrieval-only   # only recall@4 against the index; no LLM key, no cost
 ```
 
-**What a run does.** Every scenario of [`evals/scenarios.json`](evals/scenarios.json) is run `EVAL_RUNS` times (default 3). Logged-in scenarios pass the Merchant id straight into graph state. After each run, the three Judges run synchronously on `JUDGE_MODEL` with the Evidence, and their verdicts are kept.
+**What a run does.** Every scenario of [`evals/scenarios.json`](evals/scenarios.json) is run `EVAL_RUNS` times (default 3). Scenarios with a user id pass it straight into graph state (no HTTP). After each run, the three Judges run synchronously on `JUDGE_MODEL` with the Evidence, and their verdicts are kept.
 
 **What is measured:**
 - **Per scenario:** routing pass rate, fact pass rate (the same checks as `scripts/scenarios.py`), mean and min Judge Score per Judge Type, coverage fields (`fully_answered` rate, `intents_needed`, `missing`), tokens.
@@ -292,7 +292,7 @@ uv run python -m scripts.eval --retrieval-only   # only recall@4 against the ind
 - **Retrieval recall@4:** on [`evals/retrieval.json`](evals/retrieval.json), 14 labelled Portuguese Knowledge questions with their expected Corpus URLs. A question hits when an expected URL is among the pages of the top 4 Chunks, computed against the index directly (no model). Misses are listed with the URLs that came back, to tell a Corpus gap from a ranking problem.
 - **Tokens:** total and per Intent, so the cost of a run is visible. A full run is 17 scenarios × 3 runs × (graph + 3 Judges), about 160k tokens.
 
-**Output.** Each run writes `evals/results/<UTC timestamp>.json` (gitignored) with metadata (commit, dirty tree, date, reply model, Judge model, run count, dataset hashes), the sections above and every run record. It prints a summary and the deltas against the committed baseline [`evals/baseline.json`](evals/baseline.json): rates in percentage points, Judge Score means, Mixed/incomplete rates, tokens per run. A warning is printed when the reply model, Judge model or dataset differ from the baseline's, since the deltas are then not like-for-like.
+**Output.** Each run writes `evals/results/<UTC timestamp>.json` (gitignored) with metadata (commit, dirty tree, date, reply model, Judge model, run count, dataset hashes), the sections above and every run record. It prints a summary and the deltas against the committed baseline [`evals/baseline.json`](evals/baseline.json): rates in percentage points, Judge Score means, Mixed/incomplete rates, tokens per run. A warning is printed when the reply model, Judge model or scenario dataset hash differ from the baseline's, since the deltas are then not like-for-like.
 
 **Privacy.** Unlike the logs, the results file (and so the committed baseline) holds raw Messages and replies, unredacted. That is fine while the eval only uses the fixture Merchants in `data/merchants.json`. With real Merchant data, commit only the aggregates and keep the run records in a gitignored file.
 
