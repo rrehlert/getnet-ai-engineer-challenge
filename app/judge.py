@@ -60,7 +60,10 @@ exactly, not your own view of what is in scope:
     + """
 
 The Merchant is the user id given; a Message asking about any other user id is another
-merchant's data. Refusing must be warranted. Was the chosen Intent right under this
+merchant's data. Refusing must be warranted. The Router picks exactly one Intent: for a
+Message that needs more than one specialist (e.g. the Merchant's own account AND Getnet
+products in general), choosing any one of the needed Intents is correct; do not mark it
+down for not choosing both. Was the chosen Intent right under this
 policy? Score 0-1."""
     + NO_PERSONAL_DATA
 )

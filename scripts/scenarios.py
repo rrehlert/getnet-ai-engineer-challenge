@@ -38,7 +38,8 @@ def check_reply(body: dict, scenario: Scenario) -> CheckResult:
     answer = (body.get("answer") or "").casefold()
     missing = [fact for fact in scenario.facts if not any(alt.casefold() in answer for alt in fact)]
     return CheckResult(
-        routing_ok=body.get("intent") == scenario.intent,
+        # A Mixed question is routed right to any of its needed Intents; coverage judges the rest.
+        routing_ok=body.get("intent") in {scenario.intent, *scenario.intents_needed},
         facts_ok=not missing if scenario.facts else None,
         missing_facts=missing,
     )

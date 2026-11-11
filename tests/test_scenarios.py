@@ -126,3 +126,10 @@ def test_invalid_scenarios_are_rejected_naming_the_scenario(raw, needle, tmp_pat
     with pytest.raises(DatasetError, match=r"scenario 2") as exc:
         load_scenarios(path)
     assert needle in str(exc.value)
+
+
+def test_mixed_question_routed_to_any_needed_intent_passes_routing():
+    scenario = Scenario("Caixa 1 is offline, how do I set up Wi-Fi?", "cliente1988", "support", intents_needed=["support", "knowledge"])
+
+    assert check_reply({"intent": "knowledge", "answer": ""}, scenario).routing_ok is True
+    assert check_reply({"intent": "unsupported", "answer": ""}, scenario).routing_ok is False

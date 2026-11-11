@@ -18,11 +18,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Aggregation unit tests on hand-built records: pass rates, means/mins, mixed and incomplete rates (incl. zero mixed → rate 0, no division error), threshold both ways
-- [ ] Runner with fake graph + fake Judge model on a two-scenario dataset writes a results file with expected structure and metadata
-- [ ] `EVAL_RUNS` respected; a failing run is recorded, not fatal
-- [ ] Token totals summed from graph `tokens`
-- [ ] No real LLM calls in tests
+- [x] Aggregation unit tests on hand-built records: pass rates, means/mins, mixed and incomplete rates (incl. zero mixed → rate 0, no division error), threshold both ways
+- [x] Runner with fake graph + fake Judge model on a two-scenario dataset writes a results file with expected structure and metadata
+- [x] `EVAL_RUNS` respected; a failing run is recorded, not fatal
+- [x] Token totals summed from graph `tokens`
+- [x] No real LLM calls in tests
 
 ## Comments
 
