@@ -1,6 +1,7 @@
 """LLM Judges (spec: Observability). Each Judge Type writes one `event:"judge"` line.
 
-Runs after the reply is sent; failures are logged, never raised.
+Runs after the reply is sent; failures are logged, never raised. `run_judges` also
+returns the verdicts, so the eval runner can aggregate them.
 """
 
 import json
@@ -8,7 +9,7 @@ import logging
 from collections.abc import Sequence
 
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.graph import Evidence, Intent
 from app.observability import LogPrivacy, emit
@@ -26,6 +27,23 @@ class Verdict(BaseModel):
 
     score: float = Field(ge=0, le=1, description="0 = wrong/bad, 1 = right/excellent")
     reason: str = Field(description="One short sentence explaining the score.")
+
+
+class Coverage(Verdict):
+    """Which specialists the Message needed and whether the reply covered all of it."""
+
+    intents_needed: list[Intent] = Field(
+        description="Every Intent the Message needs to be answered fully (more than one for a Mixed question)."
+    )
+    fully_answered: bool = Field(description="True if the reply answers every part of the Message.")
+    missing: str = Field(default="", description="The parts left unanswered; empty when fully answered.")
+
+    @model_validator(mode="after")
+    def _full_coverage_scores_one(self) -> "Coverage":
+        if self.fully_answered:
+            self.score = 1.0
+            self.missing = ""
+        return self
 
 
 # Reasons are logged (and redacted regardless); keep personal data out of them in the first place.
@@ -62,6 +80,23 @@ Evidence does not support counts against the reply, however plausible it sounds.
 Rubric for Intent '{intent}': {rubric} Score 0-1.""" + NO_PERSONAL_DATA
 
 
+COVERAGE_PROMPT = (
+    """You judge whether a reply from Getnet merchant support covers everything the Message asks.
+Each Intent below is handled by one specialist; the Router picks only one per Message:
+
+"""
+    + INTENT_POLICY
+    + """
+
+List every Intent the Message needs to be answered fully: a Message that asks about the
+Merchant's own account AND about Getnet products in general needs both `support` and
+`knowledge`. `unsupported` only on its own, for a Message the system must refuse entirely.
+Then say whether the reply answers every part, and what is missing. Score 0-1: 1 when fully
+answered, lower the more of the Message is left unanswered."""
+    + NO_PERSONAL_DATA
+)
+
+
 def format_evidence(evidence: Sequence[Evidence]) -> str:
     """Evidence items in order, cut at `EVIDENCE_CAP` characters in total with a marker."""
     if not evidence:
@@ -88,7 +123,16 @@ def _answer_input(
     return [("system", ANSWER_PROMPT.format(intent=intent, rubric=rubric)), ("human", human)]
 
 
-JUDGES = {"route": _route_input, "answer": _answer_input}
+def _coverage_input(message: str, intent: Intent, answer: str, **_) -> list[tuple[str, str]]:
+    return [("system", COVERAGE_PROMPT), ("human", f"Message: {message}\nIntent chosen: {intent}\nReply: {answer}")]
+
+
+# Judge Type -> (structured output schema, prompt builder)
+JUDGES = {
+    "route": (Verdict, _route_input),
+    "answer": (Verdict, _answer_input),
+    "coverage": (Coverage, _coverage_input),
+}
 
 
 def run_judges(
@@ -102,12 +146,16 @@ def run_judges(
     sources: list,
     evidence: Sequence[Evidence],
     user_id: str = "",
-) -> None:
-    judge = model.with_structured_output(Verdict, method="function_calling")
+) -> dict[str, Verdict]:
+    """Run every Judge Type, log one line each, and return the verdicts by Judge Type.
+
+    A Judge that fails is logged as an error and left out of the result.
+    """
     texts = privacy.text_fields(message=message, answer=answer)
-    for judge_type, build_input in JUDGES.items():
+    verdicts: dict[str, Verdict] = {}
+    for judge_type, (schema, build_input) in JUDGES.items():
         try:
-            verdict = judge.invoke(
+            verdict = model.with_structured_output(schema, method="function_calling").invoke(
                 build_input(
                     message=message,
                     intent=intent,
@@ -117,11 +165,13 @@ def run_judges(
                     user_id=user_id,
                 )
             )
-            if not isinstance(verdict, Verdict):
+            if not isinstance(verdict, schema):
                 raise ValueError(f"no verdict returned: {verdict!r}")
         except Exception as exc:
             log.error("judge %s failed trace_id=%s: %r", judge_type, trace_id, exc)
             continue
+        verdicts[judge_type] = verdict
+        extra = verdict.model_dump(exclude={"score", "reason"}) if isinstance(verdict, Coverage) else {}
         emit(
             "judge",
             logging.WARNING if verdict.score < FLAG_BELOW else logging.INFO,
@@ -131,4 +181,6 @@ def run_judges(
             intent=intent,
             judge_score=verdict.score,
             reason=verdict.reason,
+            **extra,
         )
+    return verdicts

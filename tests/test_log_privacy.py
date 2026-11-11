@@ -11,7 +11,7 @@ from app.judge import JUDGES, run_judges
 from app.observability import JsonFormatter, LogPrivacy, emit
 from app.settings import Settings
 from tests.test_chat_api import post, route_to
-from tests.test_observability import FakeJudgeModel, app_for, lines, verdict
+from tests.test_observability import FakeJudgeModel, app_for, coverage, lines, verdict
 
 
 def emitted(caplog, text):
@@ -158,13 +158,13 @@ def test_log_messages_full_logs_raw_text_still_capped(caplog):
 def test_judge_reason_is_redacted_and_judges_are_told_not_to_quote_personal_data(caplog):
     caplog.set_level(logging.INFO)
     leaky = "Merchant joao@example.com with CPF 123.456.789-09 was answered."
-    model = FakeJudgeModel(messages=iter([verdict(0.9, leaky), verdict(0.9, leaky)]))
+    model = FakeJudgeModel(messages=iter([verdict(0.9, leaky), verdict(0.9, leaky), coverage(["knowledge"], True, reason=leaky)]))
 
     run_judges(model, privacy=LogPrivacy(key=b"k"), trace_id="t1", message="hi", intent="knowledge", answer="ok", sources=[], evidence=[])
 
     reasons = [j["reason"] for _, j in lines(caplog, "judge")]
-    assert reasons == ["Merchant [EMAIL] with CPF [CPF] was answered."] * 2
-    for build in JUDGES.values():
+    assert reasons == ["Merchant [EMAIL] with CPF [CPF] was answered."] * 3
+    for _schema, build in JUDGES.values():
         (_, system), _ = build(message="hi", intent="knowledge", answer="ok", sources=[], evidence=[])
         assert "personal data" in system
 

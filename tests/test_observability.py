@@ -38,6 +38,11 @@ def verdict(score, reason="r"):
     )
 
 
+def coverage(intents_needed, fully_answered, missing="", score=1.0, reason="r"):
+    args = {"intents_needed": intents_needed, "fully_answered": fully_answered, "missing": missing, "score": score, "reason": reason}
+    return AIMessage(content="", tool_calls=[{"name": "Coverage", "args": args, "id": "c2", "type": "tool_call"}])
+
+
 def app_for(route_fn, **kw):
     return create_app(graph=build_graph(route_fn, knowledge, support), **kw)
 
@@ -77,13 +82,14 @@ def test_judges_not_run_when_disabled(caplog):
 
 def test_judges_run_in_background_when_enabled(caplog):
     caplog.set_level(logging.INFO)
-    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.4, "not grounded")]))
+    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.4, "not grounded"), coverage(["knowledge"], True)]))
     body = post(TestClient(app_for(route_to("knowledge"), judge_enabled=True, judge_model=model))).json()
 
     judged = lines(caplog, "judge")
     assert [(lvl, j["judge_type"], j["judge_score"]) for lvl, j in judged] == [
         (logging.INFO, "route", 0.9),
         (logging.WARNING, "answer", 0.4),
+        (logging.INFO, "coverage", 1.0),
     ]
     assert all(j["trace_id"] == body["trace_id"] and j["intent"] == "knowledge" for _, j in judged)
     assert judged[1][1]["reason"] == "not grounded"
@@ -91,11 +97,12 @@ def test_judges_run_in_background_when_enabled(caplog):
 
 def test_judge_failure_is_logged_not_raised(caplog):
     caplog.set_level(logging.INFO)
-    model = FakeJudgeModel(messages=iter([AIMessage("no tool call"), verdict(0.8)]))
+    model = FakeJudgeModel(messages=iter([AIMessage("no tool call"), verdict(0.8), coverage(["unsupported"], True)]))
 
-    run_judges(model, privacy=LogPrivacy(key=b"k"), trace_id="t1", message="hi", intent="unsupported", answer="Não posso.", sources=[], evidence=[])
+    verdicts = run_judges(model, privacy=LogPrivacy(key=b"k"), trace_id="t1", message="hi", intent="unsupported", answer="Não posso.", sources=[], evidence=[])
 
-    assert [j["judge_type"] for _, j in lines(caplog, "judge")] == ["answer"]
+    assert [j["judge_type"] for _, j in lines(caplog, "judge")] == ["answer", "coverage"]
+    assert set(verdicts) == {"answer", "coverage"}
     assert any(r.levelno == logging.ERROR and "route" in r.getMessage() for r in caplog.records)
 
 
@@ -103,7 +110,7 @@ def test_route_judge_uses_the_routers_intent_policy():
     from app.judge import JUDGES
     from app.router import INTENT_POLICY
 
-    (_, system), (_, human) = JUDGES["route"](
+    (_, system), (_, human) = JUDGES["route"][1](
         message="What's the euro exchange rate today?", intent="knowledge", user_id="cliente1988"
     )
 
@@ -131,7 +138,7 @@ def test_request_log_line_when_index_is_not_ready(caplog):
 def answer_prompt(evidence, intent="knowledge"):
     from app.judge import JUDGES
 
-    (_, system), (_, human) = JUDGES["answer"](
+    (_, system), (_, human) = JUDGES["answer"][1](
         message="Pix cai na hora?", intent=intent, answer="Sim.", sources=[], evidence=evidence
     )
     return system, human
@@ -181,14 +188,14 @@ def knowledge_with_evidence(state):
 
 
 def test_evidence_reaches_the_answer_judge_but_not_the_chat_response():
-    model = RecordingJudgeModel(messages=iter([verdict(0.9), verdict(0.9)]), seen=[])
+    model = RecordingJudgeModel(messages=iter([verdict(0.9), verdict(0.9), coverage(["knowledge"], True)]), seen=[])
     graph = build_graph(route_to("knowledge"), knowledge_with_evidence, support)
     client = TestClient(create_app(graph=graph, judge_enabled=True, judge_model=model))
 
     body = post(client).json()
 
     assert "evidence" not in body
-    _route_call, answer_call = model.seen
+    _route_call, answer_call, _coverage_call = model.seen
     assert "Get Smart tem tela touchscreen." in answer_call[-1].content
 
 
@@ -218,3 +225,68 @@ def test_startup_warns_when_judge_model_equals_llm_model(monkeypatch, caplog):
 
     assert warned_when_on
     assert judge_warnings(caplog) == []  # Judges off, or Judge model injected
+
+
+def judge_all(model, **kw):
+    args = {"privacy": LogPrivacy(key=b"k"), "trace_id": "t1", "message": "Caixa 1 offline? E como configuro o Wi-Fi?",
+            "intent": "support", "answer": "Caixa 1 está offline.", "sources": [], "evidence": []}
+    return run_judges(model, **{**args, **kw})
+
+
+def test_run_judges_returns_a_verdict_per_judge_type(caplog):
+    caplog.set_level(logging.INFO)
+    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.8), coverage(["support", "knowledge"], False, "Wi-Fi setup steps", 0.5)]))
+
+    verdicts = judge_all(model)
+
+    assert list(verdicts) == ["route", "answer", "coverage"]
+    assert [v.score for v in verdicts.values()] == [0.9, 0.8, 0.5]
+    assert len(lines(caplog, "judge")) == 3
+
+
+def test_coverage_verdict_is_parsed_logged_and_returned(caplog):
+    caplog.set_level(logging.INFO)
+    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.9), coverage(["support", "knowledge"], False, "Wi-Fi setup steps", 0.5, "half answered")]))
+
+    cov = judge_all(model)["coverage"]
+
+    assert cov.intents_needed == ["support", "knowledge"]
+    assert cov.fully_answered is False
+    assert cov.missing == "Wi-Fi setup steps"
+    [(level, line)] = [(lvl, j) for lvl, j in lines(caplog, "judge") if j["judge_type"] == "coverage"]
+    assert level == logging.WARNING
+    assert line["intents_needed"] == ["support", "knowledge"]
+    assert line["fully_answered"] is False
+    assert line["missing"] == "Wi-Fi setup steps"
+    assert line["judge_score"] == 0.5 and line["reason"] == "half answered"
+
+
+def test_fully_answered_coverage_scores_one_with_nothing_missing():
+    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.9), coverage(["support"], True, "leftover", 0.7)]))
+
+    cov = judge_all(model)["coverage"]
+
+    assert (cov.score, cov.missing) == (1.0, "")
+
+
+def test_personal_data_in_coverage_missing_is_redacted(caplog):
+    caplog.set_level(logging.INFO)
+    missing = "status of card 4111 1111 1111 1111 for CPF 123.456.789-09"
+    model = FakeJudgeModel(messages=iter([verdict(0.9), verdict(0.9), coverage(["support"], False, missing, 0.3)]))
+
+    judge_all(model)
+
+    [line] = [j for _, j in lines(caplog, "judge") if j["judge_type"] == "coverage"]
+    assert "4111 1111 1111 1111" not in line["missing"] and "123.456.789-09" not in line["missing"]
+
+
+def test_coverage_judge_prompt_uses_the_intent_policy_and_sees_the_reply():
+    from app.judge import JUDGES
+    from app.router import INTENT_POLICY
+
+    schema, build = JUDGES["coverage"]
+    (_, system), (_, human) = build(message="m?", intent="support", answer="the reply", sources=[], evidence=[])
+
+    assert schema.__name__ == "Coverage"
+    assert INTENT_POLICY in system
+    assert "the reply" in human and "Intent chosen: support" in human
