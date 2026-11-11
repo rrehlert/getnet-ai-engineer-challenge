@@ -9,9 +9,9 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done (CI run 43121191849)
 
-- [ ] Fake index returning known pages: hits, misses, recall value, printed miss list
-- [ ] Loader rejects an expected URL not in the Corpus
-- [ ] Results file gains a `retrieval` section
-- [ ] No real LLM calls in tests
+- [x] Fake index returning known pages: hits, misses, recall value, printed miss list
+- [x] Loader rejects an expected URL not in the Corpus
+- [x] Results file gains a `retrieval` section
+- [x] No real LLM calls in tests
