@@ -6,7 +6,7 @@ A containerized multi-agent support assistant for Getnet merchants. A **Router A
 
 Domain vocabulary is in [`GLOSSARY.md`](GLOSSARY.md). Architecture decisions are in [`docs/adr/`](docs/adr/). The spec and tickets are in [`.scratch/getnet-multi-agent/`](.scratch/getnet-multi-agent/).
 
-After the evaluation, an improvement run fixed several weak spots (Judge Evidence and model, scenario facts, log privacy, container, CI). Its spec is [`.scratch/improvement-fixes/`](.scratch/improvement-fixes/), and its clock, sessions and decisions are in [`IMPROVEMENT_RUN_DIARY.md`](IMPROVEMENT_RUN_DIARY.md).
+After the evaluation, an improvement run fixed several weak spots (Judge Evidence and model, scenario facts, log privacy, container, CI). Its specs are [`.scratch/improvement-fixes/`](.scratch/improvement-fixes/) and [`.scratch/eval-expansion/`](.scratch/eval-expansion/) (the [eval runner](#eval-runner)), and its clock, sessions and decisions are in [`IMPROVEMENT_RUN_DIARY.md`](IMPROVEMENT_RUN_DIARY.md).
 
 ## Quick start
 
@@ -81,11 +81,12 @@ POST /chat {message, user_id}
   - Provider errors or rate limits, from any provider, after retries → 503 `{error:{code,message}, trace_id}`.
   - Unexpected errors → 500 with a generic message.
   - Unsupported Messages and unknown users are normal 200 responses.
-- **Observability** (`app/observability.py`, `app/judge.py`, `app/redact.py`). One JSON log line per request: `trace_id, user_ref, message, intent, agent, tools, tokens, latency_ms, outcome` (`message_length` instead of `message` when `LOG_MESSAGES=none`). All log output is redacted (see [Privacy](#privacy)). When `JUDGE_ENABLED`, two background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
+- **Observability** (`app/observability.py`, `app/judge.py`, `app/redact.py`). One JSON log line per request: `trace_id, user_ref, message, intent, agent, tools, tokens, latency_ms, outcome` (`message_length` instead of `message` when `LOG_MESSAGES=none`). All log output is redacted (see [Privacy](#privacy)). When `JUDGE_ENABLED`, three background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
   - `route`: was the Intent right?
   - `answer`: is every claim in the reply supported by the **Evidence**, and does it answer the Message? Evidence is the tool output the specialist Agent actually saw (`search_corpus`/`web_search` results, including Chunks below the threshold, or the account tool data), capped at 6,000 characters with a truncation marker. It stays in graph state and is not returned by `/chat`.
+  - `coverage`: which Intents did the Message need (`intents_needed`), and did the reply cover every part (`fully_answered`, `missing`)? It scores 1 when fully answered. A Message that needs more than one Intent is a **Mixed question**.
 
-  A Judge line carries `judge_type, trace_id, intent, judge_score, reason` plus the `message` and `answer` it scored (same `LOG_MESSAGES` mode and 500-character cap as the request line), so it can be read on its own. The Judges run on `JUDGE_MODEL`, by default a different model family from `LLM_MODEL`; a warning is logged at startup if they are equal.
+  A Judge line carries `judge_type, trace_id, intent, judge_score, reason` (and the coverage fields on `coverage` lines) plus the `message` and `answer` it scored (same `LOG_MESSAGES` mode and 500-character cap as the request line), so it can be read on its own. The Judges run on `JUDGE_MODEL`, by default a different model family from `LLM_MODEL`; a warning is logged at startup if they are equal.
 
 ## Design choices
 
@@ -104,7 +105,7 @@ POST /chat {message, user_id}
 - **Knowledge Agent:** `search_corpus` and `web_search` tools. They return `(content, artifact)`, so the model reads the text while the code keeps the structured Sources.
 - **Customer Support Agent:** 3 tools: `get_settlement_schedule`, `get_terminal_status` and `get_recent_transactions`. `user_id` is injected through `ToolRuntime` context, not passed as a tool argument, so the model cannot be talked into reading another Merchant's account.
 - **Middleware:** `ToolCallLimitMiddleware` caps tool calls, and `dynamic_prompt` adds today's date and the Merchant context to the prompt.
-- **Judges:** structured output (`Verdict`: score + reason). The tool outputs are also kept as Evidence for the `answer` Judge.
+- **Judges:** structured output (`Verdict`: score + reason; `Coverage` adds `intents_needed`, `fully_answered`, `missing`). The tool outputs are also kept as Evidence for the `answer` Judge.
 
 ## Guardrails and reliability
 
@@ -153,8 +154,9 @@ Tool outputs (account data) are never logged. The mock fixture itself holds mock
 
 **Implemented:**
 - One structured JSON log line per request, with a `trace_id` that is also returned to the client.
-- Two online LLM Judges (`route`, `answer`) that score live traffic in the background, on a model from a different family than the reply model. The `answer` Judge rates the reply against the Evidence. A score below 0.7 is logged at WARNING.
-- `scripts/scenarios.py` as a small labelled eval set: 13 Messages with expected Intents, 7 of them with expected facts. Routing accuracy and fact accuracy are reported separately.
+- Three online LLM Judges (`route`, `answer`, `coverage`) that score live traffic in the background, on a model from a different family than the reply model. The `answer` Judge rates the reply against the Evidence; `coverage` detects Mixed questions and incomplete replies. A score below 0.7 is logged at WARNING.
+- One shared labelled dataset, [`evals/scenarios.json`](evals/scenarios.json): 17 Messages with expected Intents, 11 with expected facts, 4 Mixed questions. Used by the live smoke script (`scripts/scenarios.py`) and the in-process [eval runner](#eval-runner).
+- The [eval runner](#eval-runner): every scenario several times, Judges run synchronously with Evidence, aggregate scores per Intent and overall, the multi-intent Router threshold, retrieval recall@4, and a committed baseline that every run is compared against.
 - CI on every push and pull request: the test suite and a container smoke test.
 
 **Production plan (not implemented):**
@@ -171,8 +173,8 @@ Tool outputs (account data) are never logged. The mock fixture itself holds mock
   - mean Judge Score dropping below a baseline;
   - a spike in `unsupported`, which could be an attack or a Router regression.
 - **Tracing:** add OpenTelemetry or LangSmith spans for each node and tool call, keyed by the existing `trace_id`.
-- **Offline eval dataset:** grow the scenarios into a versioned golden set (Message, user, expected Intent, expected tools, reference facts). Use low-scoring production traffic flagged by the Judges as a source of new cases. Run it on every prompt, model or corpus change, and block a merge if Intent accuracy or the mean answer score drops.
-- **RAG metrics:** retrieval hit rate and context precision on the golden set, used to tune k, chunk size and the threshold.
+- **Grow the eval dataset:** add expected tools, and use low-scoring production traffic flagged by the Judges as a source of new cases. Run the eval runner in CI on every prompt, model or corpus change, and block a merge if Intent accuracy or the mean answer score drops below the baseline.
+- **More RAG metrics:** MRR and context precision next to recall@4, used to tune k, chunk size and the threshold.
 
 ## Tech stack
 
@@ -205,6 +207,7 @@ All configuration is in env vars (see [`.env.example`](.env.example)). Never com
 | `CHROMA_DIR` | `chroma` | persistent index directory (in compose, the named volume `chroma` at `/app/chroma`) |
 | `LOG_HASH_KEY` | empty | key for the `user_ref` HMAC in logs; empty means a random key per process, with a warning (refs change on restart) |
 | `LOG_MESSAGES` | `redacted` | how much Message/reply text is logged; see [Privacy](#privacy) |
+| `EVAL_RUNS` | `3` | runs per scenario in the [eval runner](#eval-runner) (≥1); not used by the service |
 
 ## Examples to test
 
@@ -249,7 +252,7 @@ Example response:
 }
 ```
 
-To run all 10 example Messages from the challenge plus 3 Router edge cases, checking the expected Intent and, where declared, the expected facts in the reply:
+To run the shared scenario dataset (the 10 example Messages from the challenge, 3 Router edge cases and 4 Mixed questions) against the running API, checking the expected Intent and, where declared, the expected facts in the reply:
 
 ```bash
 uv run python scripts/scenarios.py            # or: scripts/scenarios.py http://host:port
@@ -258,15 +261,56 @@ uv run python scripts/scenarios.py            # or: scripts/scenarios.py http://
 Each scenario prints a routing mark and a facts mark (`✓`, `✗`, or `-` when it declares no facts), then the Intent, agent, steps, `trace_id`, answer, Sources and any missing facts. The report ends with two separate totals:
 
 ```
-routing 13/13
-facts 7/7
+routing 17/17
+facts 11/11
 ```
 
-followed by the missing facts per scenario. A fact is a list of accepted alternatives, matched as case-insensitive substrings (e.g. an amount matches as `1.817,26`, `1817,26`, `1,817.26` or `1817.26`). Customer Support facts come from the fixture; Knowledge facts only where the fact is stable in the Corpus; refusals and web-search scenarios have none. The exit code is non-zero if routing or facts are below 100%.
+followed by the missing facts per scenario. A fact is a list of accepted alternatives, matched as case-insensitive substrings (e.g. an amount matches as `1.817,26`, `1817,26`, `1,817.26` or `1817.26`). Customer Support facts come from the fixture; Knowledge facts only where the fact is stable in the Corpus; refusals and web-search scenarios have none. A Mixed question routes correctly to any of its needed Intents. The exit code is non-zero if routing or facts are below 100%. For repeated runs, Judge Scores and a baseline, use the [eval runner](#eval-runner).
 
 Mock merchants:
 - **`cliente1988`** has pending Settlements from yesterday, an offline Terminal (weak Wi-Fi) and recent declines (codes 51 and 54).
 - **`cliente2024`** is the clean contrast: online Terminal, everything paid out.
+
+## Eval runner
+
+`scripts/eval.py` measures quality offline. It builds the production graph in-process (needs an LLM key, no running server), so the Judges see the Evidence that `/chat` doesn't return.
+
+```bash
+uv run python -m scripts.eval                    # full eval: EVAL_RUNS runs per scenario + recall@4
+EVAL_RUNS=1 uv run python -m scripts.eval        # cheaper: one run per scenario
+uv run python -m scripts.eval --save-baseline    # also copy this run over evals/baseline.json
+uv run python -m scripts.eval --retrieval-only   # only recall@4 against the index; no LLM key, no cost
+```
+
+**What a run does.** Every scenario of [`evals/scenarios.json`](evals/scenarios.json) is run `EVAL_RUNS` times (default 3). Logged-in scenarios pass the Merchant id straight into graph state. After each run, the three Judges run synchronously on `JUDGE_MODEL` with the Evidence, and their verdicts are kept.
+
+**What is measured:**
+- **Per scenario:** routing pass rate, fact pass rate (the same checks as `scripts/scenarios.py`), mean and min Judge Score per Judge Type, coverage fields (`fully_answered` rate, `intents_needed`, `missing`), tokens.
+- **Per expected Intent and overall:** the same rates and Judge Scores, plus errors and missing verdicts.
+- **Mixed questions:** the mixed-question rate (share of judged runs where the `coverage` Judge listed ≥2 needed Intents) and the incomplete rate (share of those not fully answered). The coverage Judge's agreement with the 4 labelled Mixed scenarios is reported as a sanity check.
+- **Multi-intent Router threshold** (agreed before measuring): mixed-question rate **≥10%** and incomplete rate **≥50%** → "build multi-intent Router", otherwise "not justified". Today the Router picks one Intent per Message.
+- **Retrieval recall@4:** on [`evals/retrieval.json`](evals/retrieval.json), 14 labelled Portuguese Knowledge questions with their expected Corpus URLs. A question hits when an expected URL is among the pages of the top 4 Chunks, computed against the index directly (no model). Misses are listed with the URLs that came back, to tell a Corpus gap from a ranking problem.
+- **Tokens:** total and per Intent, so the cost of a run is visible. A full run is 17 scenarios × 3 runs × (graph + 3 Judges), about 160k tokens.
+
+**Output.** Each run writes `evals/results/<UTC timestamp>.json` (gitignored) with metadata (commit, dirty tree, date, reply model, Judge model, run count, dataset hashes), the sections above and every run record. It prints a summary and the deltas against the committed baseline [`evals/baseline.json`](evals/baseline.json): rates in percentage points, Judge Score means, Mixed/incomplete rates, tokens per run. A warning is printed when the reply model, Judge model or dataset differ from the baseline's, since the deltas are then not like-for-like.
+
+**Privacy.** Unlike the logs, the results file (and so the committed baseline) holds raw Messages and replies, unredacted. That is fine while the eval only uses the fixture Merchants in `data/merchants.json`. With real Merchant data, commit only the aggregates and keep the run records in a gitignored file.
+
+**Baseline** (`evals/baseline.json`, commit `ad0769b`, reply `openai:openai/gpt-6-luna`, Judge `openai:anthropic/claude-haiku-5.5`, 3 runs × 17 scenarios = 51 runs, 0 errors):
+
+| Intent | Runs | Routing | Facts | `route` | `answer` | `coverage` |
+|---|---|---|---|---|---|---|
+| knowledge | 21 | 100% | 67% | 1.00 | 0.40 | 0.80 |
+| support | 24 | 100% | 88% | 0.81 | 0.33 | 0.77 |
+| unsupported | 6 | 100% | - | 1.00 | 1.00 | 1.00 |
+| **overall** | 51 | 100% | 82% | 0.91 | 0.44 | 0.81 |
+
+Judge columns are mean Judge Scores.
+
+- Mixed questions 12/51 = 24% (≥10%); incomplete 11/12 = 92% (≥50%) → **build multi-intent Router**. The coverage Judge agreed with the labelled Mixed scenarios 12/12.
+- recall@4 12/14 = 86%. Misses: the Pix app-enablement page (another Pix page ranked above it) and `/duvidas/taxas/` (not in the top 4).
+- Tokens: 160,120.
+- The `answer` Judge looks harsh (0.0 on some replies whose facts pass) and gives honest "not found" replies full marks. Its reasons often penalise omissions, which is the `coverage` Judge's job. See the diary for the per-scenario notes.
 
 ## Running the tests
 
@@ -285,7 +329,7 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 124 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 195 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
@@ -294,12 +338,13 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
   - an unknown user triggers no tool call.
 - **RAG:** chunking, the title prefix, threshold filtering, collection-name hashing.
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
-- **Observability:** the log line fields, Judge scoring/flagging, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
+- **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
-- **Scenario checking:** the pure function that scores routing and facts.
+- **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.
+- **Eval runner:** aggregation over hand-built run records (pass rates, means, Mixed and incomplete rates, threshold decision, baseline deltas), the runner wiring with a fake graph and Judge model, and recall@4 with a fake index.
 - **Ingestion:** the extraction XPath, on saved HTML fixtures.
 
-**2. End-to-end scenarios (`scripts/scenarios.py`).** These run against the real container and the real LLM: the 10 challenge Messages plus 3 Router edge cases (prompt injection, another Merchant's data, a Portuguese Message). Each gets a ✓/✗ on the expected Intent and on its expected facts, and the answers and Sources are printed for review. Routing is consistently 13/13; facts vary between runs (6/7, 7/7 and 5/7 so far, the first before a fact was corrected; see the diary), mostly from nondeterministic retrieval.
+**2. End-to-end scenarios (`scripts/scenarios.py`) and the eval runner (`scripts/eval.py`).** The scenarios run against the real container and the real LLM: the 10 challenge Messages, 3 Router edge cases (prompt injection, another Merchant's data, a Portuguese Message) and 4 Mixed questions. Each gets a ✓/✗ on the expected Intent and on its expected facts, and the answers and Sources are printed for review. Before the Mixed questions, routing was consistently 13/13 and facts varied between runs (6/7, 7/7 and 5/7, the first before a fact was corrected; see the diary), mostly from nondeterministic retrieval. The [eval runner](#eval-runner) runs the same dataset in-process several times, with Judge Scores, so this variance is measured instead of eyeballed.
 
 **CI (`.github/workflows/ci.yml`).** On every push and pull request (changes only under `.scratch/`, `docs/` or to the diary are skipped):
 - `test`: `uv sync --locked`, then `uv run pytest`;
@@ -314,8 +359,8 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
   - Sources are non-empty for corpus questions;
   - no Support tool is called for another or unknown `user_id`;
   - the reply is in the Message's language.
-- **Golden dataset + LLM-as-judge:** a versioned set of labelled cases, scored by the same `route`/`answer` Judges plus the Evidence-based groundedness check, run offline over the set. Set thresholds on the aggregate scores rather than exact strings, to absorb LLM nondeterminism. Run each case a few times and track the pass rate.
-- **Retrieval evaluation:** for each corpus question, the expected page URL(s), measured with hit@k and MRR. This isolates RAG regressions from generation regressions.
+- **Golden dataset + LLM-as-judge:** built as the [eval runner](#eval-runner) (repeated runs, aggregate Judge Scores, baseline deltas). Next: thresholds on the aggregates that fail a CI job, and Judges calibrated against human labels.
+- **Retrieval evaluation:** recall@4 is built; MRR is next. It isolates RAG regressions from generation regressions.
 - **Adversarial suite:** prompt injection, cross-Merchant access, PII fishing, off-topic and harmful requests, all expected to end as `unsupported` with no tool calls.
 - **Failure injection:** a stubbed provider that times out, returns 429 or returns malformed tool calls, plus an empty corpus and web search being down. Assert the documented 503/fallback behaviour.
 - **Scenarios in CI:** the smoke test already exists (above); next, run the scenarios against it with an LLM key. The paid LLM suites run on prompt, model or corpus changes and nightly.
@@ -333,7 +378,7 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 │   ├── agents.py           # pieces shared by agents (language rule, tokens/steps summary)
 │   ├── rag.py              # corpus loading, chunking, fastembed, Chroma index
 │   ├── llm.py              # chat model factory + provider-error classification
-│   ├── judge.py            # route / answer LLM judges (answer rated against Evidence)
+│   ├── judge.py            # route / answer / coverage LLM judges (answer rated against Evidence)
 │   ├── observability.py    # JSON log lines, user_ref, LOG_MESSAGES modes
 │   ├── redact.py           # personal-data redactor for all log output
 │   └── settings.py         # pydantic-settings (env vars)
@@ -341,7 +386,14 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 ├── data/merchants.json     # mock Merchant accounts (dates relative to today)
 ├── scripts/
 │   ├── fetch_corpus.py     # ingestion: fetch + extract Getnet pages into corpus/
-│   └── scenarios.py        # end-to-end scenario runner against a running API
+│   ├── scenarios.py        # end-to-end scenario runner against a running API
+│   ├── eval.py             # in-process eval runner: repeated runs, Judges, aggregates, baseline deltas
+│   └── retrieval.py        # recall@4 of the Corpus search
+├── evals/
+│   ├── scenarios.json      # shared scenario dataset (smoke script + eval runner)
+│   ├── retrieval.json      # labelled Knowledge questions for recall@4
+│   ├── baseline.json       # committed baseline results
+│   └── results/            # per-run results (gitignored)
 ├── tests/                  # pytest suite (+ fixtures/ with saved HTML)
 ├── docs/
 │   ├── adr/                # architecture decision records
@@ -349,6 +401,7 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 ├── .github/workflows/ci.yml  # tests + container smoke test
 ├── .scratch/getnet-multi-agent/  # spec.md + tickets (local issue tracker)
 ├── .scratch/improvement-fixes/   # improvement run: fixes spec + tickets
+├── .scratch/eval-expansion/      # improvement run: eval expansion spec + tickets
 ├── IMPROVEMENT_RUN_DIARY.md  # improvement run: clock, sessions, decisions, scenario results
 ├── GLOSSARY.md             # domain vocabulary
 ├── Dockerfile, docker-compose.yml, .env.example
@@ -385,6 +438,8 @@ The README (`11`, `12`) and the video came after the timebox.
 - **Sources:** they can be noisy (every Chunk above the threshold from every search), so filter them to the ones the answer uses.
 - **`steps`:** it counts tool calls that the limit blocked.
 - ~~**Answer Judge vs. web search:** the Judge sees only the answer and the Source URLs/titles, not what the tools returned, and runs on the same model that wrote the reply.~~ **Fixed** in the improvement run: the `answer` Judge now rates the reply against the Evidence (capped tool output), and `JUDGE_MODEL` defaults to a different model family. Remaining: the Judges are not calibrated against human labels.
+- ~~**Semantic quality:** Judge Scores existed only as single log lines, with no aggregate, baseline or repeated runs.~~ **Closed** in the improvement run by the [eval runner](#eval-runner): aggregate Judge Scores per Intent, a committed baseline with deltas, the `coverage` Judge and recall@4.
+- **Multi-intent Router:** the baseline meets the agreed threshold (24% Mixed questions, 92% of them incomplete), so a Router that can hand one Message to both specialists is justified but not built yet.
 - **Chroma:** old hash-named collections are never pruned.
 - **Out of scope:** multi-turn memory, real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
 - **Other bonuses (designed, not built):**
