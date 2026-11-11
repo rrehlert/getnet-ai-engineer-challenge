@@ -100,7 +100,7 @@ def test_summarize_counts_missing_verdicts_per_judge_type():
 
 
 def test_summary_shows_missing_verdicts_only_when_some_are_missing(tmp_path):
-    _, results = run(tmp_path)
+    _, results = run_eval_with(tmp_path)
     assert "missing verdicts" not in format_summary(results)
 
     results["overall"]["judges_missing"]["answer"] = 2
@@ -251,7 +251,7 @@ def judge_model():
     return FakeJudgeModel(messages=itertools.cycle([verdict(1.0), verdict(0.5), coverage(["support", "knowledge"], False, "Wi-Fi steps", 0.4)]))
 
 
-def run(tmp_path, graph=None, runs=2):
+def run_eval_with(tmp_path, graph=None, runs=2, **kwargs):
     path = run_eval(
         dataset(tmp_path),
         graph=graph or build_graph(router, knowledge, support),
@@ -261,12 +261,14 @@ def run(tmp_path, graph=None, runs=2):
         reply_model="openai:reply",
         judge_model_name="openai:judge",
         now=NOW,
+        **kwargs,
     )
     return path, json.loads(path.read_text())
 
 
+
 def test_runner_writes_timestamped_results_file_with_metadata(tmp_path):
-    path, results = run(tmp_path)
+    path, results = run_eval_with(tmp_path)
 
     assert path == tmp_path / "results" / "20261111T203005Z.json"
     meta = results["metadata"]
@@ -280,7 +282,7 @@ def test_runner_writes_timestamped_results_file_with_metadata(tmp_path):
 
 
 def test_runner_records_each_run_with_checks_and_verdicts(tmp_path):
-    _, results = run(tmp_path)
+    _, results = run_eval_with(tmp_path)
 
     first = results["runs"][0]
     assert first["index"] == 1
@@ -295,20 +297,20 @@ def test_runner_records_each_run_with_checks_and_verdicts(tmp_path):
 
 
 def test_logged_in_scenarios_pass_user_id_into_graph_state(tmp_path):
-    _, results = run(tmp_path, runs=1)
+    _, results = run_eval_with(tmp_path, runs=1)
 
     assert results["runs"][1]["answer"] == "Terminal of cliente2024 is offline."
 
 
 def test_eval_runs_respected(tmp_path):
-    _, results = run(tmp_path, runs=3)
+    _, results = run_eval_with(tmp_path, runs=3)
 
     assert [r["index"] for r in results["runs"]] == [1, 1, 1, 2, 2, 2]
     assert [r["run"] for r in results["runs"][:3]] == [1, 2, 3]
 
 
 def test_token_totals_summed_from_graph_tokens(tmp_path):
-    _, results = run(tmp_path, runs=2)
+    _, results = run_eval_with(tmp_path, runs=2)
 
     assert [r["tokens"] for r in results["runs"]] == [13, 13, 23, 23]
     assert results["tokens"]["total"] == 72
@@ -323,7 +325,7 @@ def test_failing_run_is_recorded_not_fatal(tmp_path):
             raise openai.APITimeoutError(request=httpx.Request("POST", "https://llm.example"))
         return router(state)
 
-    _, results = run(tmp_path, graph=build_graph(flaky_router, knowledge, support), runs=2)
+    _, results = run_eval_with(tmp_path, graph=build_graph(flaky_router, knowledge, support), runs=2)
 
     failed, ok = results["runs"][0], results["runs"][1]
     assert failed["error"] == "provider_unavailable"
@@ -334,7 +336,7 @@ def test_failing_run_is_recorded_not_fatal(tmp_path):
 
 
 def test_scenario_ids_survive_reordering_the_dataset(tmp_path):
-    _, results = run(tmp_path, runs=1)
+    _, results = run_eval_with(tmp_path, runs=1)
     path = tmp_path / "scenarios.json"
     data = json.loads(path.read_text())
     data["scenarios"].reverse()
@@ -357,7 +359,7 @@ def test_eval_runs_defaults_to_three_and_reads_env():
 
 
 def test_summary_shows_intents_overall_threshold_and_tokens(tmp_path):
-    _, results = run(tmp_path)
+    _, results = run_eval_with(tmp_path)
 
     summary = format_summary(results)
 
@@ -469,7 +471,7 @@ def test_comparison_without_baseline_prints_note():
 
 
 def test_report_without_baseline_file_prints_summary_and_note(tmp_path):
-    path, _ = run(tmp_path)
+    path, _ = run_eval_with(tmp_path)
 
     text = report(path, baseline_path=tmp_path / "baseline.json")
 
@@ -478,7 +480,7 @@ def test_report_without_baseline_file_prints_summary_and_note(tmp_path):
 
 
 def test_report_compares_against_baseline_file(tmp_path):
-    path, _ = run(tmp_path)
+    path, _ = run_eval_with(tmp_path)
     baseline = tmp_path / "baseline.json"
     baseline.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -488,7 +490,7 @@ def test_report_compares_against_baseline_file(tmp_path):
 
 
 def test_save_baseline_copies_the_results_file(tmp_path):
-    path, _ = run(tmp_path)
+    path, _ = run_eval_with(tmp_path)
     baseline = tmp_path / "evals" / "baseline.json"
 
     text = report(path, baseline_path=baseline, save_baseline=True)

@@ -1,0 +1,19 @@
+{
+  "_comment": "Labelled Knowledge questions for recall@4 (scripts/retrieval.py). Portuguese, as the Knowledge Agent writes search_corpus queries. A question hits when any expected_urls page is among the top 4 Chunks' pages; every URL must be a Corpus page.",
+  "questions": [
+    {"question": "Como configurar o Wi-Fi na maquininha", "expected_urls": ["https://site.getnet.com.br/get-ajuda-configuracoes/como-configurar-o-wi-fi-na-sua-maquininha-getnet/"]},
+    {"question": "O que são chaves Pix", "expected_urls": ["https://site.getnet.com.br/duvidas/pix/", "https://site.getnet.com.br/duvidas/pix-mais-respostas/"]},
+    {"question": "Como habilitar o recebimento de vendas via Pix no aplicativo", "expected_urls": ["https://site.getnet.com.br/get-ajuda-pix/como-habilitar-o-recebimento-de-vendas-via-pix-no-aplicativo-getnet-brasil/"]},
+    {"question": "Como funciona a antecipação de vendas", "expected_urls": ["https://site.getnet.com.br/duvidas/antecipacao-de-vendas/", "https://site.getnet.com.br/quando-vale-a-pena-antecipar-as-suas-vendas-no-cartao/", "https://site.getnet.com.br/get-ajuda-antecipacao-de-venda/como-antecipar-sua-vendas-pelo-app/"]},
+    {"question": "Como ativar a antecipação automática no app", "expected_urls": ["https://site.getnet.com.br/get-ajuda-antecipacao-de-venda/como-habilitar-antecipacao-automatica-pelo-app/"]},
+    {"question": "O que é chargeback e como evitar", "expected_urls": ["https://site.getnet.com.br/get-ajuda-chargeback/o-que-e-chargeback/"]},
+    {"question": "Erro ADQ 1-07 maquininha não inicializada", "expected_urls": ["https://site.getnet.com.br/get-ajuda-erros-maquininha/erro-adq-1-07/"]},
+    {"question": "Venda por aproximação não funciona, erro na leitora NFC", "expected_urls": ["https://site.getnet.com.br/get-ajuda-erros-maquininha/erro-nfc/"]},
+    {"question": "Como solicitar manutenção da maquininha", "expected_urls": ["https://site.getnet.com.br/get-ajuda-maquininha/como-solicitar-a-manutencao-da-maquininha-getnet/"]},
+    {"question": "O que é a Get Conta e quais os benefícios", "expected_urls": ["https://site.getnet.com.br/get-ajuda-get-conta/o-que-e-a-get-conta/", "https://site.getnet.com.br/duvidas/get-conta/"]},
+    {"question": "Diferença entre venda autorizada, aprovada e desfeita", "expected_urls": ["https://site.getnet.com.br/get-ajuda-gestao-de-vendas/entenda-o-que-e-venda-autorizada-aprovada-e-desfeita/", "https://site.getnet.com.br/get-ajuda-gestao-de-vendas/quais-possiveis-status-das-minhas-vendas/"]},
+    {"question": "Como criar um link de pagamento", "expected_urls": ["https://site.getnet.com.br/duvidas/link-de-pagamento/", "https://site.getnet.com.br/link-de-pagamento/", "https://site.getnet.com.br/link-de-pagamento-getnet/", "https://site.getnet.com.br/pagamentos-pelo-whatsapp/"]},
+    {"question": "Quais as taxas da maquininha Getnet", "expected_urls": ["https://site.getnet.com.br/duvidas/taxas/"]},
+    {"question": "Recursos da maquininha Get Smart", "expected_urls": ["https://site.getnet.com.br/duvidas/get-smart/", "https://site.getnet.com.br/get-ajuda-maquininha/solucoes-get-smart/"]}
+  ]
+}

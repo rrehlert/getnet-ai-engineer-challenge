@@ -109,6 +109,12 @@ class FastEmbedder:
         return next(iter(self._model.query_embed(text))).tolist()
 
 
+class Index(Protocol):
+    """What the Knowledge Agent and the retrieval eval need from the Corpus index."""
+
+    def search(self, query: str, k: int = TOP_K) -> list[Hit]: ...
+
+
 class CorpusIndex:
     def __init__(self, collection, embedder: Embedder):
         self.collection = collection

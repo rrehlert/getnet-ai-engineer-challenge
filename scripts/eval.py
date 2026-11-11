@@ -1,9 +1,11 @@
 """In-process eval runner: every scenario of `evals/scenarios.json`, `EVAL_RUNS` times each.
 
-Usage: uv run python -m scripts.eval [--save-baseline]
+Usage: uv run python -m scripts.eval [--save-baseline | --retrieval-only]
 Builds the production graph (needs an LLM key, no server), runs the Judges synchronously
-with Evidence, writes `evals/results/<UTC timestamp>.json`, prints a summary and the deltas
-vs `evals/baseline.json`. `--save-baseline` then copies this run's results over the baseline.
+with Evidence, measures retrieval recall@4 on `evals/retrieval.json`, writes
+`evals/results/<UTC timestamp>.json`, prints a summary and the deltas vs `evals/baseline.json`.
+`--save-baseline` then copies this run's results over the baseline.
+`--retrieval-only` measures just recall@4 against the Corpus index (no LLM key needed).
 """
 
 import argparse
@@ -25,6 +27,13 @@ from typing import Any
 from app.judge import JUDGES, run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy
+from app.rag import CORPUS_DIR, Index
+from scripts.retrieval import (
+    RETRIEVAL_SET,
+    format_retrieval,
+    load_retrieval,
+    recall_at_k,
+)
 from scripts.scenarios import DATASET, Scenario, check_reply, load_scenarios
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -232,14 +241,20 @@ def run_eval(
     reply_model: str,
     judge_model_name: str,
     now: datetime | None = None,
+    index: Index | None = None,
+    retrieval_set: Path = RETRIEVAL_SET,
+    corpus_dir: Path = CORPUS_DIR,
 ) -> Path:
     """Run every scenario `runs` times, Judge each reply, write the results file and return its path.
 
     `graph` is anything with `.invoke(state) -> state`. A failing run is recorded, not raised.
+    With an `index`, the results also carry recall@4 on `retrieval_set`.
     """
     now = now or datetime.now(UTC)
     raw = Path(dataset).read_bytes()
     scenarios = load_scenarios(dataset)
+    # Before the graph runs: no model, and a bad retrieval set fails fast.
+    retrieval = recall_at_k(load_retrieval(retrieval_set, corpus_dir), index) if index is not None else None
     privacy = LogPrivacy(key=secrets.token_bytes(32), messages="none")
     records = []
     for i, scenario in enumerate(scenarios, 1):
@@ -250,21 +265,51 @@ def run_eval(
     aggregates = aggregate(records)
     results = {
         "metadata": {
-            "commit": _git("rev-parse", "HEAD"),
-            "dirty": bool(_git("status", "--porcelain")),
+            **_run_metadata(now),
             "reply_model": reply_model,
             "judge_model": judge_model_name,
             "eval_runs": runs,
-            "date": now.isoformat(),
             "dataset_sha256": hashlib.sha256(raw).hexdigest(),
+            **({"retrieval_sha256": _sha256(retrieval_set)} if index is not None else {}),
         },
         **aggregates,
         "tokens": {
             "total": aggregates["overall"]["tokens"],
             "per_intent": {intent: s["tokens"] for intent, s in aggregates["per_intent"].items()},
         },
-        "runs": records,
     }
+    if retrieval is not None:
+        results["retrieval"] = retrieval
+    results["runs"] = records
+    return _write_results(results, out_dir, now)
+
+
+def run_retrieval(
+    index: Index,
+    retrieval_set: Path = RETRIEVAL_SET,
+    *,
+    corpus_dir: Path = CORPUS_DIR,
+    out_dir: Path = RESULTS_DIR,
+    now: datetime | None = None,
+) -> Path:
+    """recall@4 only (no model): writes a results file with metadata and the `retrieval` section."""
+    now = now or datetime.now(UTC)
+    results = {
+        "metadata": {**_run_metadata(now), "retrieval_only": True, "retrieval_sha256": _sha256(retrieval_set)},
+        "retrieval": recall_at_k(load_retrieval(retrieval_set, corpus_dir), index),
+    }
+    return _write_results(results, out_dir, now)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _run_metadata(now: datetime) -> dict:
+    return {"commit": _git("rev-parse", "HEAD"), "dirty": bool(_git("status", "--porcelain")), "date": now.isoformat()}
+
+
+def _write_results(results: dict, out_dir: Path, now: datetime) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{now.strftime('%Y%m%dT%H%M%SZ')}.json"
     path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -308,6 +353,8 @@ def format_summary(results: dict) -> str:
         "",
         f"tokens {results['tokens']['total']}",
     ]
+    if "retrieval" in results:
+        lines += ["", format_retrieval(results["retrieval"])]
     return "\n".join(lines)
 
 
@@ -437,19 +484,29 @@ def main(argv: list[str] | None = None) -> int:
     from app.settings import get_settings, warn_if_judge_not_independent
 
     parser = argparse.ArgumentParser(description="In-process eval runner")
-    parser.add_argument("--save-baseline", action="store_true", help=f"copy this run's results to {_display(BASELINE)}")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--save-baseline", action="store_true", help=f"copy this run's results to {_display(BASELINE)}")
+    modes.add_argument("--retrieval-only", action="store_true", help="only recall@4 on the Corpus index (no LLM key)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING)
+    index = load_default_index()
+    if args.retrieval_only:
+        path = run_retrieval(index)
+        print(format_retrieval(json.loads(path.read_text(encoding="utf-8"))["retrieval"]))
+        print(f"\nresults: {_display(path)}")
+        return 0
+
     logging.getLogger("app.events").setLevel(logging.ERROR)  # Judge lines: the results file has them
     settings = get_settings()
     warn_if_judge_not_independent(settings)
     path = run_eval(
-        graph=build_default_graph(load_default_index()),
+        graph=build_default_graph(index),
         judge_model=make_chat_model(settings, settings.judge_model),
         runs=eval_runs(),
         reply_model=settings.llm_model,
         judge_model_name=settings.judge_model,
+        index=index,
     )
     print(report(path, save_baseline=args.save_baseline))
     print(f"\nresults: {_display(path)}")

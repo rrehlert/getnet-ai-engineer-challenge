@@ -7,7 +7,7 @@ Sources come only from the tools' artifacts, never from model-written text.
 import logging
 from collections.abc import Callable
 from datetime import date
-from typing import Any, Protocol
+from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 from app.agents import LANGUAGE_RULE, run_summary
 from app.graph import GraphState, Node, Source, dedup_sources
-from app.rag import TOP_K, Hit, relevant_sources
+from app.rag import TOP_K, Index, relevant_sources
 
 log = logging.getLogger(__name__)
 
@@ -29,10 +29,6 @@ KNOWLEDGE_TOOL_CALL_LIMIT = 4
 # Backstop if the model keeps calling tools past the limit: ~4 graph steps per round
 # (model, limit hook, tools, slack) for the allowed rounds plus 4 spare rounds.
 KNOWLEDGE_RECURSION_LIMIT = 4 * (KNOWLEDGE_TOOL_CALL_LIMIT + 4)
-
-
-class Index(Protocol):
-    def search(self, query: str, k: int = TOP_K) -> list[Hit]: ...
 
 
 def make_search_corpus(index: Index, threshold: float) -> BaseTool:
