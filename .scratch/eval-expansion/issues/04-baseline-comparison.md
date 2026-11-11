@@ -9,7 +9,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done (CI run 43120010798)
 
 - [x] Delta function unit tests: improvements, regressions, Intent present in only one side
 - [x] Mismatched Judge model / dataset hash → warning in output
