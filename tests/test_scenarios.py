@@ -1,4 +1,10 @@
-from scripts.scenarios import Scenario, check_reply
+import json
+from typing import get_args
+
+import pytest
+
+from app.graph import Intent
+from scripts.scenarios import INTENTS, DatasetError, Scenario, brl, check_reply, load_scenarios, parse_scenario
 
 
 def test_correct_intent_with_missing_fact_passes_routing_but_fails_facts():
@@ -62,3 +68,53 @@ def test_error_body_without_answer_fails_declared_facts():
     assert result.routing_ok is False
     assert result.facts_ok is False
     assert result.missing_facts == [["offline"]]
+
+
+# Shared dataset (evals/scenarios.json)
+
+
+def test_dataset_intents_match_the_graph():
+    assert INTENTS == set(get_args(Intent))
+
+
+def test_dataset_starts_with_the_original_scenarios():
+    scenarios = load_scenarios()
+
+    assert len(scenarios) >= 13
+    assert scenarios[0].message == "What's the difference between the Get Clássica and the Get Smart?"
+    assert scenarios[12].message == "Quando cai o dinheiro das vendas de ontem?"
+    assert all(not s.intents_needed for s in scenarios[:13])
+
+
+def test_dataset_has_mixed_questions_with_two_or_more_intents():
+    mixed = [s for s in load_scenarios() if s.intents_needed]
+
+    assert 3 <= len(mixed) <= 4
+    assert all(len(set(s.intents_needed)) >= 2 for s in mixed)
+
+
+def test_brl_fact_expands_to_spellings():
+    raw = {"message": "m", "user_id": "u", "intent": "support", "facts": [{"brl": "1817.26"}]}
+
+    assert parse_scenario(raw, "s").facts == [brl("1817.26")]
+
+
+@pytest.mark.parametrize(
+    "raw, needle",
+    [
+        ({"message": "m", "user_id": "u"}, "intent"),
+        ({"message": "m", "user_id": "u", "intent": "sales"}, "intent"),
+        ({"message": "m", "user_id": "u", "intent": "support", "intents_needed": ["support"]}, "intents_needed"),
+        ({"message": "m", "user_id": "u", "intent": "support", "intents_needed": ["support", "billing"]}, "intents_needed"),
+        ({"message": "m", "user_id": "u", "intent": "support", "facts": [[]]}, "fact"),
+        ({"message": "m", "user_id": "u", "intent": "support", "facts": [[""]]}, "fact"),
+        ({"message": "", "user_id": "u", "intent": "support"}, "message"),
+    ],
+)
+def test_invalid_scenarios_are_rejected_naming_the_scenario(raw, needle, tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"scenarios": [{"message": "ok", "user_id": "u", "intent": "knowledge"}, raw]}))
+
+    with pytest.raises(DatasetError, match=r"scenario 2") as exc:
+        load_scenarios(path)
+    assert needle in str(exc.value)

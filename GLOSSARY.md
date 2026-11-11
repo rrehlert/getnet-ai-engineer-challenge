@@ -67,3 +67,7 @@ _Avoid_: Judge kind, eval category
 **Judge Score**:
 A 0–1 rating of one Message under one Judge Type. A score below 0.7 is flagged.
 _Avoid_: Eval score, rating, confidence
+
+**Mixed question**:
+A Message that needs more than one specialist to answer fully, e.g. a Terminal that is offline plus how to set up Wi-Fi (Customer Support and Knowledge). The Router picks one Intent per Message.
+_Avoid_: Multi-intent message, compound question
