@@ -7,7 +7,18 @@ import openai
 import pytest
 
 from app.graph import build_graph
-from scripts.eval import aggregate, eval_runs, format_summary, mixed_stats, run_eval, summarize, threshold_decision
+from scripts.eval import (
+    aggregate,
+    compare,
+    eval_runs,
+    format_comparison,
+    format_summary,
+    mixed_stats,
+    report,
+    run_eval,
+    summarize,
+    threshold_decision,
+)
 from tests.test_observability import FakeJudgeModel, coverage, verdict
 
 
@@ -353,3 +364,134 @@ def test_summary_shows_intents_overall_threshold_and_tokens(tmp_path):
     assert "knowledge" in summary and "support" in summary and "overall" in summary
     assert "build multi-intent Router" in summary
     assert "72" in summary
+
+
+# --- Baseline comparison ---
+
+
+def results_of(records, **metadata):
+    meta = {"reply_model": "openai:reply", "judge_model": "openai:judge", "dataset_sha256": "abc"} | metadata
+    aggregates = aggregate(records)
+    return {"metadata": meta, **aggregates, "tokens": {"total": aggregates["overall"]["tokens"]}}
+
+
+def test_compare_reports_improvements_and_regressions():
+    baseline = results_of([
+        record(expected="knowledge", routing_ok=False, facts_ok=False, scores={"answer": 0.5}, tokens=100),
+        record(expected="knowledge", routing_ok=True, facts_ok=True, scores={"answer": 0.7}, tokens=100),
+    ])
+    current = results_of([
+        record(expected="knowledge", routing_ok=True, facts_ok=True, scores={"answer": 0.4}, tokens=150),
+        record(expected="knowledge", routing_ok=True, facts_ok=True, scores={"answer": 0.4}, tokens=150),
+    ])
+
+    deltas = compare(current, baseline)
+
+    knowledge = deltas["per_intent"]["knowledge"]
+    assert knowledge["routing_pass_rate"] == pytest.approx(0.5)
+    assert knowledge["fact_pass_rate"] == pytest.approx(0.5)
+    assert knowledge["judges"]["answer"] == pytest.approx(-0.2)
+    assert deltas["overall"]["judges"]["answer"] == pytest.approx(-0.2)
+    assert deltas["tokens_per_run"] == 50
+
+
+def test_compare_mixed_and_incomplete_rates():
+    baseline = results_of([record(coverage=(["support"], True)), record(coverage=(["support", "knowledge"], True))])
+    current = results_of([record(coverage=(["support", "knowledge"], False)), record(coverage=(["support", "knowledge"], True))])
+
+    deltas = compare(current, baseline)
+
+    assert deltas["mixed"]["mixed_rate"] == pytest.approx(0.5)
+    assert deltas["mixed"]["incomplete_rate"] == pytest.approx(0.5)
+
+
+def test_compare_tokens_per_run_so_run_counts_can_differ():
+    baseline = results_of([record(tokens=100)] * 3)
+    current = results_of([record(tokens=100)])
+
+    assert compare(current, baseline)["tokens_per_run"] == 0
+
+
+def test_compare_incomplete_rate_is_none_when_a_side_has_no_mixed_questions():
+    baseline = results_of([record(coverage=(["support"], True))])
+    current = results_of([record(coverage=(["support", "knowledge"], False))])
+
+    deltas = compare(current, baseline)
+
+    assert deltas["mixed"]["mixed_rate"] == 1.0
+    assert deltas["mixed"]["incomplete_rate"] is None
+
+
+def test_compare_marks_intents_and_judge_types_present_on_one_side_only():
+    baseline = results_of([record(expected="knowledge", scores={"route": 1.0}), record(expected="support")])
+    current = results_of([record(expected="knowledge", scores={"answer": 1.0}), record(expected="general")])
+
+    deltas = compare(current, baseline)
+
+    assert deltas["per_intent"]["general"] == {"only_in": "run"}
+    assert deltas["per_intent"]["support"] == {"only_in": "baseline"}
+    assert deltas["per_intent"]["knowledge"]["judges"] == {"route": None, "answer": None}
+
+
+def test_compare_fact_rate_is_none_when_either_side_has_no_facts():
+    deltas = compare(results_of([record(facts_ok=True)]), results_of([record(facts_ok=None)]))
+
+    assert deltas["overall"]["fact_pass_rate"] is None
+
+
+def test_comparison_shows_signed_deltas():
+    baseline = results_of([record(routing_ok=False, scores={"answer": 0.5}, tokens=100)])
+    current = results_of([record(routing_ok=True, scores={"answer": 0.3}, tokens=90)])
+
+    text = format_comparison(current, baseline)
+
+    assert "routing +100pp" in text
+    assert "answer -0.20" in text
+    assert "tokens/run -10" in text
+    assert "not like-for-like" not in text
+
+
+@pytest.mark.parametrize("field", ["judge_model", "reply_model", "dataset_sha256"])
+def test_comparison_warns_when_baseline_differs_in_models_or_dataset(field):
+    baseline = results_of([record()])
+    current = results_of([record()], **{field: "other"})
+
+    text = format_comparison(current, baseline)
+
+    assert f"WARNING: {field} differs" in text
+    assert "not like-for-like" in text
+
+
+def test_comparison_without_baseline_prints_note():
+    text = format_comparison(results_of([record()]), None)
+
+    assert "no baseline" in text
+
+
+def test_report_without_baseline_file_prints_summary_and_note(tmp_path):
+    path, _ = run(tmp_path)
+
+    text = report(path, baseline_path=tmp_path / "baseline.json")
+
+    assert "overall" in text and "no baseline" in text
+    assert not (tmp_path / "baseline.json").exists()
+
+
+def test_report_compares_against_baseline_file(tmp_path):
+    path, _ = run(tmp_path)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    text = report(path, baseline_path=baseline)
+
+    assert "vs baseline" in text and "routing +0pp" in text
+
+
+def test_save_baseline_copies_the_results_file(tmp_path):
+    path, _ = run(tmp_path)
+    baseline = tmp_path / "evals" / "baseline.json"
+
+    text = report(path, baseline_path=baseline, save_baseline=True)
+
+    assert baseline.read_text(encoding="utf-8") == path.read_text(encoding="utf-8")
+    assert "baseline saved" in text

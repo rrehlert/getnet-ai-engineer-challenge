@@ -1,10 +1,12 @@
 """In-process eval runner: every scenario of `evals/scenarios.json`, `EVAL_RUNS` times each.
 
-Usage: uv run python -m scripts.eval
+Usage: uv run python -m scripts.eval [--save-baseline]
 Builds the production graph (needs an LLM key, no server), runs the Judges synchronously
-with Evidence, writes `evals/results/<UTC timestamp>.json` and prints a summary.
+with Evidence, writes `evals/results/<UTC timestamp>.json`, prints a summary and the deltas
+vs `evals/baseline.json`. `--save-baseline` then copies this run's results over the baseline.
 """
 
+import argparse
 import hashlib
 import json
 import logging
@@ -27,6 +29,9 @@ from scripts.scenarios import DATASET, Scenario, check_reply, load_scenarios
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "evals" / "results"
+BASELINE = ROOT / "evals" / "baseline.json"
+# Metadata that must match the baseline's for deltas to be like-for-like.
+LIKE_FOR_LIKE_FIELDS = ("reply_model", "judge_model", "dataset_sha256")
 DEFAULT_RUNS = 3
 
 MIXED_RATE_THRESHOLD = 0.10
@@ -306,10 +311,134 @@ def format_summary(results: dict) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+# --- Baseline comparison ---
+
+def _delta(current: float | None, baseline: float | None) -> float | None:
+    return None if current is None or baseline is None else current - baseline
+
+
+def _stats_delta(current: dict, baseline: dict) -> dict:
+    """Run minus baseline; None where either side lacks the value (no facts, Judge Type absent)."""
+    judge_types = current["judges"].keys() | baseline["judges"].keys()
+    return {
+        "routing_pass_rate": _delta(current["routing_pass_rate"], baseline["routing_pass_rate"]),
+        "fact_pass_rate": _delta(current["fact_pass_rate"], baseline["fact_pass_rate"]),
+        "judges": {
+            judge_type: _delta(
+                current["judges"].get(judge_type, {}).get("mean"), baseline["judges"].get(judge_type, {}).get("mean")
+            )
+            for judge_type in judge_types
+        },
+    }
+
+
+def _mixed_rates(mixed: dict) -> dict:
+    """Rates with None where undefined: no coverage verdicts, or no Mixed questions to be incomplete."""
+    return {
+        "mixed_rate": mixed["mixed_rate"] if mixed["judged"] else None,
+        "incomplete_rate": mixed["incomplete_rate"] if mixed["mixed"] else None,
+    }
+
+
+def _tokens_per_run(results: dict) -> float:
+    return _rate(results["tokens"]["total"], results["overall"]["runs"])
+
+
+def compare(results: dict, baseline: dict) -> dict:
+    """Deltas (run minus baseline) per expected Intent, overall, Mixed/incomplete rates and tokens per run.
+
+    An Intent on one side only is marked `{"only_in": "run" | "baseline"}`.
+    """
+    per_intent: dict[str, dict] = {}
+    for intent in results["per_intent"].keys() | baseline["per_intent"].keys():
+        current, base = results["per_intent"].get(intent), baseline["per_intent"].get(intent)
+        if current is None or base is None:
+            per_intent[intent] = {"only_in": "run" if base is None else "baseline"}
+        else:
+            per_intent[intent] = _stats_delta(current, base)
+    current_mixed, base_mixed = _mixed_rates(results["mixed"]), _mixed_rates(baseline["mixed"])
+    return {
+        "per_intent": per_intent,
+        "overall": _stats_delta(results["overall"], baseline["overall"]),
+        "mixed": {rate: _delta(current_mixed[rate], base_mixed[rate]) for rate in current_mixed},
+        # Per run: totals scale with EVAL_RUNS, which may differ from the baseline's.
+        "tokens_per_run": _tokens_per_run(results) - _tokens_per_run(baseline),
+    }
+
+
+def baseline_warnings(results: dict, baseline: dict) -> list[str]:
+    """One line per like-for-like metadata field that differs from the baseline."""
+    run, base = results["metadata"], baseline["metadata"]
+    return [
+        f"WARNING: {field} differs (run {run.get(field)}, baseline {base.get(field)}): deltas are not like-for-like"
+        for field in LIKE_FOR_LIKE_FIELDS
+        if run.get(field) != base.get(field)
+    ]
+
+
+def _signed(delta: float | None, fmt: str) -> str:
+    return "-" if delta is None else format(delta, fmt)
+
+
+def _points(delta: float | None) -> str:
+    """A rate delta in percentage points."""
+    return "-" if delta is None else f"{delta * 100:+.0f}pp"
+
+
+def _delta_row(name: str, delta: dict) -> str:
+    if "only_in" in delta:
+        return f"{name:<12} only in {delta['only_in']}"
+    judges = "  ".join(f"{judge_type} {_signed(d, '+.2f')}" for judge_type, d in sorted(delta["judges"].items()))
+    return (
+        f"{name:<12} routing {_points(delta['routing_pass_rate'])}  facts {_points(delta['fact_pass_rate'])}  {judges}"
+    )
+
+
+def format_comparison(results: dict, baseline: dict | None) -> str:
+    """Deltas vs baseline (Judge Score deltas on means), with warnings when not like-for-like."""
+    if baseline is None:
+        return "no baseline (evals/baseline.json): run with --save-baseline to create one"
+    deltas = compare(results, baseline)
+    base = baseline["metadata"]
+    lines = [f"vs baseline {base.get('date', '?')} ({str(base.get('commit', ''))[:7] or '?'})"]
+    lines += baseline_warnings(results, baseline)
+    lines.append("")
+    lines += [_delta_row(intent, d) for intent, d in sorted(deltas["per_intent"].items())]
+    lines += [
+        _delta_row("overall", deltas["overall"]),
+        "",
+        f"Mixed questions {_points(deltas['mixed']['mixed_rate'])}"
+        f"  incomplete {_points(deltas['mixed']['incomplete_rate'])}",
+        f"tokens/run {_signed(deltas['tokens_per_run'], '+.0f')}",
+    ]
+    return "\n".join(lines)
+
+
+def report(results_path: Path, *, baseline_path: Path = BASELINE, save_baseline: bool = False) -> str:
+    """Summary plus comparison against the baseline file; then optionally make this run the baseline."""
+    raw = results_path.read_text(encoding="utf-8")
+    results = json.loads(raw)
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8")) if baseline_path.exists() else None
+    text = format_summary(results) + "\n\n" + format_comparison(results, baseline)
+    if save_baseline:
+        baseline_path.parent.mkdir(parents=True, exist_ok=True)
+        baseline_path.write_text(raw, encoding="utf-8")
+        text += f"\n\nbaseline saved: {_display(baseline_path)}"
+    return text
+
+
+def _display(path: Path) -> Path:
+    return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+
+
+def main(argv: list[str] | None = None) -> int:
     from app.llm import make_chat_model
     from app.main import build_default_graph, load_default_index
     from app.settings import get_settings, warn_if_judge_not_independent
+
+    parser = argparse.ArgumentParser(description="In-process eval runner")
+    parser.add_argument("--save-baseline", action="store_true", help=f"copy this run's results to {_display(BASELINE)}")
+    args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("app.events").setLevel(logging.ERROR)  # Judge lines: the results file has them
@@ -322,8 +451,8 @@ def main() -> int:
         reply_model=settings.llm_model,
         judge_model_name=settings.judge_model,
     )
-    print(format_summary(json.loads(path.read_text(encoding="utf-8"))))
-    print(f"\nresults: {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}")
+    print(report(path, save_baseline=args.save_baseline))
+    print(f"\nresults: {_display(path)}")
     return 0
 
 

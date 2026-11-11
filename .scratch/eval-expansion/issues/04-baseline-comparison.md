@@ -11,7 +11,16 @@
 
 **Status:** ready-for-agent
 
-- [ ] Delta function unit tests: improvements, regressions, Intent present in only one side
-- [ ] Mismatched Judge model / dataset hash → warning in output
-- [ ] No baseline → runs fine, prints note
-- [ ] `--save-baseline` writes the file
+- [x] Delta function unit tests: improvements, regressions, Intent present in only one side
+- [x] Mismatched Judge model / dataset hash → warning in output
+- [x] No baseline → runs fine, prints note
+- [x] `--save-baseline` writes the file
+
+## Comments
+
+2026-11-11, review decisions:
+
+- Tokens compared per run (total / runs): totals scale with `EVAL_RUNS`, which may differ from the baseline's. No `eval_runs` warning needed.
+- Mixed/incomplete rate deltas are `-` when a side has no coverage verdicts / no Mixed questions (the 03 rate of 0 there is "undefined", not 0%).
+- Not done: flagging `judges_missing` differences in the comparison (the summary already prints them); tolerating baselines in an older format (06 writes the first one).
+- `evals/baseline.json` itself comes from the live run (06).
