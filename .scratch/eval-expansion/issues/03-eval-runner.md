@@ -16,7 +16,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** done (CI run 43118577085)
 
 - [x] Aggregation unit tests on hand-built records: pass rates, means/mins, mixed and incomplete rates (incl. zero mixed → rate 0, no division error), threshold both ways
 - [x] Runner with fake graph + fake Judge model on a two-scenario dataset writes a results file with expected structure and metadata
