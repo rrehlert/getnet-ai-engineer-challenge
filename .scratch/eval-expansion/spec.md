@@ -1,6 +1,6 @@
 # Spec: Eval expansion
 
-Status: in-progress (tickets 01–07 in `issues/`)
+Status: ready-for-agent
 
 Run: improvement run, see `IMPROVEMENT_RUN_DIARY.md`. Vocabulary: `GLOSSARY.md`.
 Builds on: `.scratch/improvement-fixes/spec.md` (Evidence, independent Judge model, scenario facts).
