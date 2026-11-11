@@ -4,7 +4,15 @@ from typing import get_args
 import pytest
 
 from app.graph import Intent
-from scripts.scenarios import INTENTS, DatasetError, Scenario, brl, check_reply, load_scenarios, parse_scenario
+from scripts.scenarios import (
+    INTENTS,
+    DatasetError,
+    Scenario,
+    brl,
+    check_reply,
+    load_scenarios,
+    parse_scenario,
+)
 
 
 def test_correct_intent_with_missing_fact_passes_routing_but_fails_facts():
