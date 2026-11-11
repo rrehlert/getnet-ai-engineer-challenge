@@ -11,12 +11,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done (CI run 43116743942)
 
-- [ ] Fake Judge model returning coverage output: verdict parsed, logged with the extra fields, returned
-- [ ] `run_judges` returns verdicts for `route`, `answer`, `coverage`; still emits one line each
-- [ ] A Judge that raises is missing from the result, others still returned
-- [ ] Personal data in `missing` is redacted in the log line
-- [ ] `/chat` path unchanged apart from the extra Judge line (existing tests pass)
-- [ ] Glossary updated
-- [ ] No real LLM calls in tests
+- [x] Fake Judge model returning coverage output: verdict parsed, logged with the extra fields, returned
+- [x] `run_judges` returns verdicts for `route`, `answer`, `coverage`; still emits one line each
+- [x] A Judge that raises is missing from the result, others still returned
+- [x] Personal data in `missing` is redacted in the log line
+- [x] `/chat` path unchanged apart from the extra Judge line (existing tests pass)
+- [x] Glossary updated
+- [x] No real LLM calls in tests

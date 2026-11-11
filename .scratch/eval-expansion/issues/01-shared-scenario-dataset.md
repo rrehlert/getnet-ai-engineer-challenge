@@ -11,11 +11,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done (CI run 43116743942)
 
-- [ ] Existing 13 scenarios load from the file with identical messages, Intents and facts (BRL expansion matches today's `brl()`)
-- [ ] Loader rejects: missing/unknown Intent; `intents_needed` with <2 Intents; empty fact
-- [ ] 3–4 Mixed scenarios added with `intents_needed`
-- [ ] `scripts/scenarios.py` uses the file; `tests/test_scenarios.py` still passes
-- [ ] Glossary: Mixed question
-- [ ] No real LLM calls in tests
+- [x] Existing 13 scenarios load from the file with identical messages, Intents and facts (BRL expansion matches today's `brl()`)
+- [x] Loader rejects: missing/unknown Intent; `intents_needed` with <2 Intents; empty fact
+- [x] 3–4 Mixed scenarios added with `intents_needed`
+- [x] `scripts/scenarios.py` uses the file; `tests/test_scenarios.py` still passes
+- [x] Glossary: Mixed question
+- [x] No real LLM calls in tests
