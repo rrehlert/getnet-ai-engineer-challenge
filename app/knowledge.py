@@ -19,7 +19,14 @@ from langchain.tools import BaseTool, tool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import ToolMessage
 
-from app.agents import LANGUAGE_RULE, conversation_messages, run_summary
+from app.agents import (
+    ESCALATION_RULE,
+    LANGUAGE_RULE,
+    conversation_messages,
+    escalation,
+    run_summary,
+    stop_on_escalation,
+)
 from app.graph import GraphState, Node, Source, dedup_sources
 from app.rag import TOP_K, Index, relevant_sources
 
@@ -120,14 +127,16 @@ Tools:
 Rules:
 - Ground every claim in what the tools returned. Never invent fees, rates, prices,
   deadlines or procedures.
-- If the tools return nothing relevant, say plainly that you didn't find the
-  information, and suggest Getnet's official channels for Getnet questions.
+- If the tools return nothing relevant to a general question, say plainly that you
+  didn't find the information. For a Getnet case you can't resolve, escalate (below).
 - Use at most a few searches, then answer with what you have.
 - Do not list URLs or sources in the answer; they are attached separately.
 - If a search misses, retry once with different Portuguese wording (synonyms,
   the product's name, the FAQ question form) before saying it wasn't found.
 - Reply in the same language as the Merchant's Message, even when tool data is in
-  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical."""
+  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical.
+
+""" + ESCALATION_RULE
 
 
 def build_prompt(today: date) -> str:
@@ -142,7 +151,8 @@ def make_knowledge(model: BaseChatModel, tools: list[BaseTool], today: Callable[
     agent = create_agent(
         model,
         tools=tools,
-        middleware=[knowledge_prompt, ToolCallLimitMiddleware(run_limit=KNOWLEDGE_TOOL_CALL_LIMIT)],
+        # stop_on_escalation last: its after_model hook runs first, so an escalation is never refused by the limit.
+        middleware=[knowledge_prompt, ToolCallLimitMiddleware(run_limit=KNOWLEDGE_TOOL_CALL_LIMIT), stop_on_escalation],
     )
 
     def knowledge(state: GraphState) -> dict:
@@ -157,6 +167,7 @@ def make_knowledge(model: BaseChatModel, tools: list[BaseTool], today: Callable[
                 s for m in messages if isinstance(m, ToolMessage) and m.artifact for s in m.artifact
             ),
             **run_summary("knowledge", messages),
+            **escalation(messages),
         }
 
     return knowledge
