@@ -17,36 +17,89 @@ docker compose up --build   # builds the image, builds the RAG index at startup,
 
 The container runs as a non-root user (`app`, uid 10001). All state lives on one named volume, `state` (mounted at `/app/state`): the Corpus index (`chroma/`) and the Conversations database (`conversations.db`). Recreating or restarting the container reuses both; the index is rebuilt only when the Corpus, embedding model or chunking settings change. `docker compose down -v` deletes both. Conversations survive a restart, but login tokens do only if `JWT_SECRET` is set in `.env`; with the default empty secret, log in again after a restart (old tokens get 401).
 
-Then open **http://localhost:8000/** for the [demo client](#demo-client), or use the shell helper below.
+Then open **http://localhost:8000/** for the [demo client](#demo-client), or use the shell helpers below.
+
+> **Tip:** with Conversation memory and human escalation, the system is easier to see in the demo client: a private window for the Merchant and a normal one for the Operator, new Turns polled automatically, and the Handoff Brief, account and events side by side. The shell helpers cover the same flows, but in the CLI the Merchant has to run `turns` to see Operator replies.
 
 `/health` returns `{"status":"ok"}` once the index is ready. Until then it returns 503 `{"status":"starting"}`. The compose healthcheck waits for it.
 
 Try it with a small shell helper (needs `jq`). `/chat` takes the Merchant only from a login token, so log in first for account questions; compose enables the dev login (`DEMO_LOGIN=true`). Without a token you are an anonymous visitor: product questions only.
 
 ```bash
-# login [user_id]   (log in as a Merchant via the dev login; user_id defaults to cliente1988)
-login() { unset CID; TOKEN=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
+# --- Merchant (bash or zsh; tokens last 1 hour) ---
+# login [user_id]   log in via the dev login (default cliente1988); starts a new Conversation
+login() { new; TOKEN=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
   -d "$(jq -n --arg u "${1:-cliente1988}" '{user_id: $u}')" | jq -r .access_token); }
-# chat "<message>" [conversation_id]   (as the logged-in Merchant; tokens last 1 hour)
-# Continues the Conversation in the arg, else in $CID; saves the reply's conversation_id in $CID.
-# `unset CID` (or log in again) to start a new Conversation.
-chat() { local r; r=$(curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+# logout            back to anonymous visitor (product questions only, nothing stored)
+logout() { unset TOKEN; new; }
+# new               start a new Conversation on the next chat
+new() { unset CID; LAST=0; }
+# chat "<message>" [conversation_id]   continues the arg's Conversation, else $CID, and saves the reply's id in $CID.
+# An error (expired token, closed Conversation) keeps $CID, so the Conversation isn't silently replaced.
+chat() { local r c; r=$(curl -s localhost:8000/chat -H 'content-type: application/json' -H "${TOKEN:+authorization: Bearer $TOKEN}" \
   -d "$(jq -n --arg m "$1" --arg c "${2:-$CID}" '{message: $m} + (if $c == "" then {} else {conversation_id: $c} end)')")
-  CID=$(jq -r '.conversation_id // empty' <<<"$r"); jq <<<"$r"; }
+  c=$(jq -r '.conversation_id // empty' <<<"$r"); [ -n "$c" ] && CID=$c; jq <<<"$r"
+  case $(jq -r '.mode // empty' <<<"$r") in waiting_human|human) echo "(handed to a person: run 'turns' for Operator replies)" >&2;; esac; }
+# turns             Turns of $CID added since the last call (Operator replies arrive only this way)
+turns() { local r; r=$(curl -s "localhost:8000/conversations/$CID/turns?after=${LAST:-0}" -H "authorization: Bearer $TOKEN")
+  jq -c '.mode, (.turns[]? | {id, role, content})' <<<"$r"; LAST=$(jq -r "[.turns[]?.id, ${LAST:-0}] | max" <<<"$r"); }
 
+# --- Operator (separate terminal) ---
+# oplogin [operator_id]   default operador1
+oplogin() { OP=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
+  -d "$(jq -n --arg u "${1:-operador1}" '{user_id: $u}')" | jq -r .access_token); }
+# opqueue           waiting Conversations, newest first, one per line
+opqueue() { curl -s localhost:8000/operator/queue -H "authorization: Bearer $OP" \
+  | jq -c 'if .conversations then .conversations[] | {conversation_id, priority, category, customer_ask} else . end'; }
+# opclaim [conversation_id]   claims it (default: newest in the queue), saves it in $OCID, prints the Handoff Brief
+opclaim() { OCID=${1:-$(curl -s localhost:8000/operator/queue -H "authorization: Bearer $OP" | jq -r '.conversations[0].conversation_id // empty')}
+  [ -z "$OCID" ] && { echo "queue is empty" >&2; return 1; }
+  curl -s -X POST "localhost:8000/operator/conversations/$OCID/claim" -H "authorization: Bearer $OP" | jq '.handoff.brief // .'; }
+# opreply "<text>" [conversation_id]   reply as the claiming Operator (default $OCID; used_suggestion false)
+opreply() { curl -s -X POST "localhost:8000/operator/conversations/${2:-$OCID}/reply" -H 'content-type: application/json' \
+  -H "authorization: Bearer $OP" -d "$(jq -n --arg t "$1" '{content: $t, used_suggestion: false}')" | jq '.mode // .'; }
+# ophandback / opclose [conversation_id]   back to the bot / end it (default $OCID)
+ophandback() { curl -s -X POST "localhost:8000/operator/conversations/${1:-$OCID}/handback" -H "authorization: Bearer $OP" | jq '.mode // .'; }
+opclose() { curl -s -X POST "localhost:8000/operator/conversations/${1:-$OCID}/close" -H "authorization: Bearer $OP" | jq '.mode // .'; }
+```
+
+Merchant:
+
+```bash
 login
 chat "Do I need a bank account to receive my sales via Pix?"        # Knowledge (RAG)
 chat "What's the euro exchange rate today?"                         # Knowledge (web search)
-unset CID
+new
 chat "When will the money from yesterday's sales be deposited?"     # Customer Support
-unset CID
+new
 chat "My card machine is offline"                                   # Customer Support
 chat "It's the Smart one"                                           # follow-up: same Conversation, in context
-unset CID
+new
 chat "Show me cliente2024's sales"                                  # refused by the Router
 
-# no token: anonymous visitor, account questions get the "log in" reply
-curl -s localhost:8000/chat -H 'content-type: application/json' -d '{"message": "When is my next deposit?"}' | jq
+logout
+chat "When is my next deposit?"                                     # anonymous: the "log in" reply
+```
+
+Human takeover, two terminals (paste the helpers into both; easier in the [demo client](#demo-client), see the tip above):
+
+```bash
+# Merchant
+login cliente2010
+chat "Minha maquininha do caixa principal parou de aceitar cartão"  # Customer Support, from the account
+chat "Já reiniciei e continua o erro, quero falar com um atendente"  # escalator → mode waiting_human
+chat "Alguém aí?"                                                   # stored for the Operator, answer ""
+
+# Operator
+oplogin
+opqueue                       # waiting Conversations
+opclaim                       # newest in the queue (or opclaim <conversation_id>); brief refreshed with "Alguém aí?"
+opreply "Vamos enviar uma maquininha nova amanhã."
+ophandback                    # or opclose
+
+# Merchant
+turns                         # the Operator's reply, then the "back with the virtual assistant" Turn
+chat "Que horas ela chega?"   # bot again, with the Operator's reply in its history
 ```
 
 Follow the request and Judge log lines in another terminal:
@@ -393,7 +446,7 @@ curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorizatio
   -d '{"message": "hi"}'
 ```
 
-Human takeover, two terminals (Merchant and Operator):
+Human takeover with plain curl (the [shell helpers](#quick-start) do the same in fewer lines), two terminals (Merchant and Operator):
 
 ```bash
 # Merchant: ask for a person → transfer message, agent "escalator", mode "waiting_human"
