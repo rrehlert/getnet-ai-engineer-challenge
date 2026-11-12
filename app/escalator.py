@@ -7,6 +7,7 @@ touches no store. The brief is stored by `/chat`, never logged.
 
 import json
 import logging
+from collections.abc import Sequence
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.agents import LANGUAGE_RULE, conversation_messages
 from app.graph import (
     ESCALATOR_STEP,
+    HISTORY_TURNS,
     TRANSFER_FALLBACK,
     GraphState,
     HandoffBrief,
@@ -24,6 +26,7 @@ from app.graph import (
     fallback_brief,
 )
 from app.judge import format_evidence
+from app.store import Turn
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +71,24 @@ class EscalatorOutput(BaseModel):
 
 def _brief(parsed: EscalatorOutput) -> HandoffBrief:
     return HandoffBrief(**parsed.model_dump(exclude={"transfer_message"}))
+
+
+def rewrite_state(owner: str, turns: Sequence[Turn], brief: HandoffBrief) -> GraphState:
+    """The Escalator's input for rewriting a stale `brief` on claim: the latest Turn as the
+    Message, the Turns before it as history, the brief's reason as the escalation reason."""
+    *prior, latest = turns
+    return {
+        "message": latest.content,
+        "user_id": owner,
+        "history": [{"role": t.role, "content": t.content} for t in prior[-HISTORY_TURNS:]],
+        # The escalated Turn's Intent; Turns sent while waiting have none.
+        "intent": next((t.intent for t in reversed(turns) if t.intent), "human"),
+        "escalation_reason": brief["reason"],
+        "evidence": [],  # Evidence isn't stored; the brief being rewritten already used it
+        "sources": [],
+        "steps": [],
+        "tokens": 0,
+    }
 
 
 def make_escalator(model: BaseChatModel) -> Node:

@@ -415,7 +415,7 @@ def create_app(
             try:
                 if brief is not None:
                     # One transaction: Turns, the open Handoff (the brief is stored, never logged), Mode waiting_human.
-                    conversation_id = get_store().escalate(conversation_id, user_id, turns, dict(brief))
+                    conversation_id = get_store().escalate(conversation_id, user_id, turns, brief)
                 elif conversation_id is None:
                     conversation_id = get_store().create_conversation(user_id)
                     get_store().append_turns(conversation_id, turns)
