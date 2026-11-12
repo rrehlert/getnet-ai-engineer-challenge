@@ -47,8 +47,9 @@ Brief rules:
 - `attempted`: what the Agents already tried or told the Merchant; "nothing yet" if nothing.
 - `priority`: high when the Merchant can't sell or is losing money now, low for general
   questions, otherwise normal.
-- `suggested_reply`: a reply the Operator may edit and send, in the Merchant's language.
-- `language`: the Merchant's language, e.g. pt-BR or en.
+- `language`: the language of the Merchant's Messages, e.g. pt-BR or en.
+- `suggested_reply`: a reply the Operator may edit and send, written in `language`
+  (the Merchant's language, not the language of these instructions).
 
 `transfer_message`: one or two sentences, in the SAME language as the Merchant's
 latest Message, saying they are being transferred to a person (an Operator) and can keep
@@ -64,8 +65,8 @@ class EscalatorOutput(BaseModel):
     attempted: str = Field(description="What the Agents already tried or told the Merchant.")
     category: str = Field(description="One word or two: e.g. terminal, settlement, transaction, product, other.")
     priority: Priority = "normal"
-    suggested_reply: str = Field(description="A reply the Operator may edit and send.")
-    language: str = Field(description="The Merchant's language, e.g. pt-BR or en.")
+    language: str = Field(description="The language of the Merchant's Messages, e.g. pt-BR or en.")
+    suggested_reply: str = Field(description="A reply the Operator may edit and send, written in `language`.")
     transfer_message: str = Field(default="", description="Tells the Merchant they are being transferred.")
 
 
