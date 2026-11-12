@@ -232,6 +232,30 @@ class Store:
                 "UPDATE conversations SET mode = ?, updated_at = ? WHERE id = ?", (mode, self._now(), conversation_id)
             )
 
+    def flag_for_review(self, conversation_id: str) -> None:
+        """Set the Review flag. Mode and `updated_at` are untouched: a flag is not Merchant activity."""
+        with self._connect() as conn:
+            conn.execute("UPDATE conversations SET needs_review = 1 WHERE id = ?", (conversation_id,))
+
+    def clear_review(self, conversation_id: str, operator: str) -> bool:
+        """Clear the Review flag and audit it (`reviewed`), in one transaction; Mode untouched.
+        False, with nothing changed or audited, when the flag was not set."""
+        with self._connect() as conn:
+            cleared = conn.execute(
+                "UPDATE conversations SET needs_review = 0 WHERE id = ? AND needs_review", (conversation_id,)
+            ).rowcount == 1
+            if cleared:
+                self._audit(conn, operator, "reviewed", conversation_id, self._now())
+        return cleared
+
+    def review_list(self) -> list[Conversation]:
+        """Conversations with the Review flag, any Mode, most recently updated first (Operator side only)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM conversations WHERE needs_review ORDER BY updated_at DESC, rowid DESC"
+            ).fetchall()
+        return [_conversation(r) for r in rows]
+
     def append_turns(self, conversation_id: str, turns: Sequence[NewTurn]) -> None:
         """Append `turns` in order, in one transaction, and bump the Conversation's `updated_at`."""
         with self._connect() as conn:

@@ -9,6 +9,7 @@ reads are not.
 Operator endpoints go here, next to the ones that exist.
 """
 
+import dataclasses
 import logging
 import uuid
 from collections.abc import Callable
@@ -66,6 +67,17 @@ class ConversationDetail(BaseModel):
     handoff: HandoffOut | None  # the current (latest) Handoff; None for a flagged Conversation never escalated
     account: dict | None  # the Merchant's fixture account; None when there is none
     turns: list[OperatorTurn]
+
+
+class ReviewItem(BaseModel):
+    conversation_id: str
+    mode: Mode
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReviewList(BaseModel):
+    conversations: list[ReviewItem]
 
 
 # Fixed bilingual `assistant` Turns that tell the polling Merchant (and the bot's history) about a handover.
@@ -203,6 +215,27 @@ def operator_router(
             log.warning("brief rewrite unusable on claim conversation_id=%s; keeping the old brief", conversation_id)
             return
         store().replace_brief(handoff.id, dict(brief), latest.id)
+
+    # --- Review flag (low `answer` Judge Scores): read after the fact, never a Mode change ---
+
+    @router.get("/review", response_model=ReviewList)
+    def review(caller: Operator):
+        """Conversations with the Review flag, any Mode, most recently updated first."""
+        return ReviewList(conversations=[
+            ReviewItem(conversation_id=c.id, mode=c.mode, created_at=c.created_at, updated_at=c.updated_at)
+            for c in store().review_list()
+        ])
+
+    @router.post("/conversations/{conversation_id}/reviewed", response_model=ConversationDetail)
+    def reviewed(conversation_id: str, caller: Operator):
+        """Clears the Review flag (audited); the Mode stays. Not flagged → 409. A never-escalated
+        Conversation is no longer visible to Operators afterwards; the response is its last view."""
+        conversation = store().operator_conversation(conversation_id)
+        if conversation is None:
+            return _not_found()
+        if not store().clear_review(conversation_id, caller.sub):
+            return error_response(409, "not_flagged", "This Conversation has no Review flag.", uuid.uuid4().hex)
+        return view(dataclasses.replace(conversation, needs_review=False))
 
     # --- Reply, handback, close (ticket 04) ---
 
