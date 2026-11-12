@@ -17,9 +17,9 @@ from langchain.agents.middleware import (
 )
 from langchain.tools import BaseTool, tool
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 
-from app.agents import LANGUAGE_RULE, run_summary
+from app.agents import LANGUAGE_RULE, conversation_messages, run_summary
 from app.graph import GraphState, Node, Source, dedup_sources
 from app.rag import TOP_K, Index, relevant_sources
 
@@ -147,7 +147,7 @@ def make_knowledge(model: BaseChatModel, tools: list[BaseTool], today: Callable[
 
     def knowledge(state: GraphState) -> dict:
         out = agent.invoke(
-            {"messages": [HumanMessage(state["message"])]},
+            {"messages": conversation_messages(state)},
             config={"recursion_limit": KNOWLEDGE_RECURSION_LIMIT},
         )
         messages = out["messages"]

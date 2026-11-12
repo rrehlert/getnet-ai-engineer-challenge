@@ -147,3 +147,48 @@ def test_anonymous_message_is_answered_but_nothing_is_stored(store, tmp_path):
     with closing(sqlite3.connect(tmp_path / "conversations.db")) as conn:
         assert conn.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM turns").fetchone()[0] == 0
+
+
+def test_first_message_has_empty_history(store):
+    graph = CapturingGraph()
+
+    chat(client_with(store, graph), "minha maquininha está offline")
+
+    assert graph.states[0]["history"] == []
+
+
+def test_follow_up_passes_previous_turns_as_history(store):
+    graph = CapturingGraph()
+    client = client_with(store, graph)
+    cid = chat(client, "minha maquininha está offline").json()["conversation_id"]
+
+    chat(client, "é a Smart", conversation_id=cid)
+
+    assert graph.states[1]["message"] == "é a Smart"
+    assert graph.states[1]["history"] == [
+        {"role": "user", "content": "minha maquininha está offline"},
+        {"role": "assistant", "content": "ok"},
+    ]
+
+
+def test_history_is_capped_at_the_last_10_turns_oldest_dropped(store):
+    from app.store import NewTurn
+
+    graph = CapturingGraph()
+    client = client_with(store, graph)
+    cid = chat(client, "m0").json()["conversation_id"]
+    store.append_turns(cid, [NewTurn("user" if i % 2 else "assistant", f"t{i}") for i in range(1, 12)])
+
+    chat(client, "now", conversation_id=cid)
+
+    history = graph.states[1]["history"]
+    assert [h["content"] for h in history] == [f"t{i}" for i in range(2, 12)]
+    assert [h["role"] for h in history][:2] == ["assistant", "user"]
+
+
+def test_anonymous_message_has_empty_history(store):
+    graph = CapturingGraph()
+
+    client_with(store, graph).post("/chat", json={"message": "What is Get Smart?"})
+
+    assert graph.states[0]["history"] == []

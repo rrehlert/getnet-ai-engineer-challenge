@@ -19,9 +19,8 @@ from langchain.agents.middleware import (
 )
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage
 
-from app.agents import LANGUAGE_RULE, run_summary
+from app.agents import LANGUAGE_RULE, conversation_messages, run_summary
 from app.graph import GraphState, Node
 
 SUPPORT_TOOL_CALL_LIMIT = 6
@@ -162,7 +161,7 @@ def make_support(model: BaseChatModel, today: Callable[[], date] = date.today) -
         ctx = SupportContext(user_id=user_id, today=today())
         known = ctx.user_id in load_merchants(ctx.today)
         runner = with_tools if known else without_tools
-        out = runner.invoke({"messages": [HumanMessage(state["message"])]}, context=ctx)
+        out = runner.invoke({"messages": conversation_messages(state)}, context=ctx)
         messages = out["messages"]
         answer = messages[-1].text
         if not known and not answer.strip():

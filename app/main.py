@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.auth import AuthSettings, InvalidToken, Principal
-from app.graph import Agent, Intent, Source, agent_for, build_graph
+from app.graph import HISTORY_TURNS, Agent, Intent, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy, log_request, setup_logging
@@ -294,11 +294,15 @@ def create_app(
         if conversation_id is not None and get_store().conversation(conversation_id, user_id or "") is None:
             log_outcome("conversation_not_found")
             return _error(404, "conversation_not_found", "Conversation not found.", trace_id)
+        # Prior Turns as context for the Agents (role + text only; account facts come from fresh tool calls).
+        history = [] if conversation_id is None else [
+            {"role": t.role, "content": t.content} for t in get_store().turns(conversation_id)[-HISTORY_TURNS:]
+        ]
         try:
             if app.state.graph is None:
                 app.state.graph = build_default_graph(app.state.index)
             result = app.state.graph.invoke(
-                {"message": request.message, "user_id": user_id}
+                {"message": request.message, "user_id": user_id, "history": history}
             )
         except Exception as exc:
             if is_provider_error(exc):

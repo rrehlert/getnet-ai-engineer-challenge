@@ -47,9 +47,22 @@ class Evidence(TypedDict):
     content: str
 
 
+HISTORY_TURNS = 10  # Turns of history the Agents see before the current Message
+
+
+class HistoryTurn(TypedDict):
+    """A prior Turn as the Agents see it: who said it and the text. Context only, never Evidence."""
+
+    role: Literal["user", "assistant", "operator"]
+    content: str
+
+
 class GraphState(TypedDict):
     message: str
     user_id: str | None  # the Merchant; None for an anonymous visitor
+    # The last HISTORY_TURNS Turns of the Conversation before `message`, oldest first;
+    # empty for a new Conversation or an anonymous visitor.
+    history: NotRequired[list[HistoryTurn]]
     intent: NotRequired[Intent]
     answer: NotRequired[str]
     sources: NotRequired[list[Source]]
