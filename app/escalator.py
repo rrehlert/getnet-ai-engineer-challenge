@@ -48,11 +48,11 @@ Brief rules:
 - `language`: the Merchant's language, e.g. pt-BR or en.
 
 `transfer_message`: one or two sentences, in the SAME language as the Merchant's
-latest Message, saying they are being transferred to a human agent and can keep
+latest Message, saying they are being transferred to a person (an Operator) and can keep
 writing while they wait. """ + LANGUAGE_RULE
 
 
-class Escalation(BaseModel):
+class EscalatorOutput(BaseModel):
     """The Handoff Brief for the Operator, plus the transfer message for the Merchant."""
 
     reason: str = Field(description="Why the Conversation is escalated.")
@@ -66,13 +66,13 @@ class Escalation(BaseModel):
     transfer_message: str = Field(default="", description="Tells the Merchant they are being transferred.")
 
 
-def _brief(parsed: Escalation) -> HandoffBrief:
+def _brief(parsed: EscalatorOutput) -> HandoffBrief:
     return HandoffBrief(**parsed.model_dump(exclude={"transfer_message"}))
 
 
 def make_escalator(model: BaseChatModel) -> Node:
     # function_calling, as in the Router: unparseable output fills `parsing_error` instead of raising.
-    structured = model.with_structured_output(Escalation, include_raw=True, method="function_calling")
+    structured = model.with_structured_output(EscalatorOutput, include_raw=True, method="function_calling")
 
     def escalate(state: GraphState) -> dict:
         system = PROMPT.format(
@@ -86,7 +86,7 @@ def make_escalator(model: BaseChatModel) -> Node:
         update = {"steps": [ESCALATOR_STEP], "tokens": usage.get("total_tokens", 0)}
         parsed = result.get("parsed")
 
-        if result.get("parsing_error") is not None or not isinstance(parsed, Escalation):
+        if result.get("parsing_error") is not None or not isinstance(parsed, EscalatorOutput):
             log.warning("escalator output unparseable; using the fallback brief and transfer message")
             return {**update, "answer": TRANSFER_FALLBACK, "handoff": fallback_brief(state)}
         message = parsed.transfer_message.strip() or TRANSFER_FALLBACK

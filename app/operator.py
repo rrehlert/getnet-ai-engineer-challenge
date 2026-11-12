@@ -237,7 +237,7 @@ def operator_router(
             return error_response(409, "not_flagged", "This Conversation has no Review flag.", uuid.uuid4().hex)
         return view(dataclasses.replace(conversation, needs_review=False))
 
-    # --- Reply, handback, close (ticket 04) ---
+    # --- Reply, handback, close: the claiming Operator's actions ---
 
     def act(conversation_id: str, action: Callable[[], ActionResult]):
         """Run an Operator action on a visible Conversation; 403 when another Operator holds

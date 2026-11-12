@@ -23,7 +23,7 @@ from app.agents import (
     ESCALATION_RULE,
     LANGUAGE_RULE,
     conversation_messages,
-    escalation,
+    escalation_update,
     run_summary,
     stop_on_escalation,
 )
@@ -176,7 +176,7 @@ def make_knowledge(model: BaseChatModel, tools: list[BaseTool], today: Callable[
                 s for m in messages if isinstance(m, ToolMessage) and m.artifact for s in m.artifact
             ),
             **run_summary("knowledge", messages),
-            **escalation(messages),
+            **escalation_update(messages),
         }
 
     return knowledge
