@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     owner TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT 'bot'
+    mode TEXT NOT NULL DEFAULT 'bot',
+    needs_review INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS conversations_owner ON conversations (owner, updated_at);
 CREATE TABLE IF NOT EXISTS turns (
@@ -41,6 +42,8 @@ CREATE TABLE IF NOT EXISTS handoffs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id TEXT NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
     brief TEXT NOT NULL,
+    -- The last Turn the brief was written from: later Turns mean it is stale.
+    brief_turn_id INTEGER,
     created_at TEXT NOT NULL,
     claimed_by TEXT,
     claimed_at TEXT,
@@ -49,7 +52,23 @@ CREATE TABLE IF NOT EXISTS handoffs (
 );
 -- At most one open Handoff per Conversation (ADR 0006).
 CREATE UNIQUE INDEX IF NOT EXISTS handoffs_open ON handoffs (conversation_id) WHERE ended_at IS NULL;
+-- Operator actions: who, what, when. No message text or brief content; no foreign key,
+-- so the retention purge keeps these rows after their Conversation is gone.
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operator TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('claim', 'reply', 'handback', 'close', 'reviewed')),
+    conversation_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    used_suggestion INTEGER  -- replies only
+);
 """
+
+# Columns added after a table was first created: (table, column, definition), for older database files.
+ADDED_COLUMNS = [
+    ("conversations", "needs_review", "INTEGER NOT NULL DEFAULT 0"),
+    ("handoffs", "brief_turn_id", "INTEGER"),
+]
 
 
 def utc_now() -> datetime:
@@ -63,6 +82,7 @@ class Conversation:
     created_at: datetime
     updated_at: datetime
     mode: Mode
+    needs_review: bool = False  # the Review flag (set by low answer Judge Scores)
 
 
 @dataclass(frozen=True)
@@ -87,10 +107,50 @@ class Handoff:
     claimed_at: datetime | None
     outcome: Literal["handed_back", "closed"] | None
     ended_at: datetime | None
+    brief_turn_id: int | None = None  # the last Turn the brief was written from
+
+
+AuditAction = Literal["claim", "reply", "handback", "close", "reviewed"]
+
+
+@dataclass(frozen=True)
+class AuditEntry:
+    """One Operator action: who, what, when. Never message text or brief content."""
+
+    operator: str
+    action: AuditAction
+    conversation_id: str
+    created_at: datetime
+    used_suggestion: bool | None  # replies only: the suggested reply sent unchanged
 
 
 def _when(value: str | None) -> datetime | None:
     return None if value is None else datetime.fromisoformat(value)
+
+
+def _conversation(r: sqlite3.Row) -> Conversation:
+    return Conversation(
+        id=r["id"],
+        owner=r["owner"],
+        created_at=datetime.fromisoformat(r["created_at"]),
+        updated_at=datetime.fromisoformat(r["updated_at"]),
+        mode=r["mode"],
+        needs_review=bool(r["needs_review"]),
+    )
+
+
+def _handoff(r: sqlite3.Row) -> Handoff:
+    return Handoff(
+        id=r["id"],
+        conversation_id=r["conversation_id"],
+        brief=json.loads(r["brief"]),
+        created_at=datetime.fromisoformat(r["created_at"]),
+        claimed_by=r["claimed_by"],
+        claimed_at=_when(r["claimed_at"]),
+        outcome=r["outcome"],
+        ended_at=_when(r["ended_at"]),
+        brief_turn_id=r["brief_turn_id"],
+    )
 
 
 @dataclass(frozen=True)
@@ -114,6 +174,9 @@ class Store:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            for table, column, definition in ADDED_COLUMNS:
+                if column not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -147,15 +210,18 @@ class Store:
             row = conn.execute(
                 "SELECT * FROM conversations WHERE id = ? AND owner = ?", (conversation_id, owner)
             ).fetchone()
-        if row is None:
-            return None
-        return Conversation(
-            id=row["id"],
-            owner=row["owner"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            mode=row["mode"],
-        )
+        return None if row is None else _conversation(row)
+
+    def operator_conversation(self, conversation_id: str) -> Conversation | None:
+        """Operator side only: the Conversation whoever owns it, if Operators may see it
+        (it had a Handoff or carries the Review flag); otherwise None, like an unknown id."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM conversations c WHERE id = ? AND (needs_review"
+                " OR EXISTS (SELECT 1 FROM handoffs h WHERE h.conversation_id = c.id))",
+                (conversation_id,),
+            ).fetchone()
+        return None if row is None else _conversation(row)
 
     def set_mode(self, conversation_id: str, mode: Mode) -> None:
         """Set the Conversation's Mode and bump `updated_at`. No transition rules here: callers decide (ADR 0006)."""
@@ -193,8 +259,9 @@ class Store:
             cid = conversation_id if conversation_id is not None else self._create(conn, owner, now)
             self._append(conn, cid, turns, now)
             conn.execute(
-                "INSERT INTO handoffs (conversation_id, brief, created_at) VALUES (?, ?, ?)",
-                (cid, json.dumps(brief, ensure_ascii=False), now),
+                "INSERT INTO handoffs (conversation_id, brief, brief_turn_id, created_at)"
+                " VALUES (?, ?, (SELECT MAX(id) FROM turns WHERE conversation_id = ?), ?)",
+                (cid, json.dumps(brief, ensure_ascii=False), cid, now),
             )
             conn.execute("UPDATE conversations SET mode = 'waiting_human' WHERE id = ?", (cid,))
         return cid
@@ -205,19 +272,67 @@ class Store:
             rows = conn.execute(
                 "SELECT * FROM handoffs WHERE conversation_id = ? ORDER BY id", (conversation_id,)
             ).fetchall()
+        return [_handoff(r) for r in rows]
+
+    def claim(self, conversation_id: str, operator: str) -> bool:
+        """`waiting_human` → `human` for `operator`, in one transaction: one conditional update
+        (so of two Operators only one wins), the open Handoff's claim, and an audit row.
+        False, with nothing changed, when the Conversation is not `waiting_human`."""
+        now = self._now()
+        with self._connect() as conn:
+            won = conn.execute(
+                "UPDATE conversations SET mode = 'human', updated_at = ? WHERE id = ? AND mode = 'waiting_human'",
+                (now, conversation_id),
+            ).rowcount == 1
+            if won:
+                conn.execute(
+                    "UPDATE handoffs SET claimed_by = ?, claimed_at = ? WHERE conversation_id = ? AND ended_at IS NULL",
+                    (operator, now, conversation_id),
+                )
+                self._audit(conn, operator, "claim", conversation_id, now)
+        return won
+
+    def replace_brief(self, handoff_id: int, brief: dict, brief_turn_id: int) -> None:
+        """A rewritten Handoff Brief, written from the Turns up to `brief_turn_id`."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE handoffs SET brief = ?, brief_turn_id = ? WHERE id = ?",
+                (json.dumps(brief, ensure_ascii=False), brief_turn_id, handoff_id),
+            )
+
+    @staticmethod
+    def _audit(
+        conn: sqlite3.Connection, operator: str, action: AuditAction, conversation_id: str, now: str,
+        used_suggestion: bool | None = None,
+    ) -> None:
+        conn.execute(
+            "INSERT INTO audit (operator, action, conversation_id, created_at, used_suggestion) VALUES (?, ?, ?, ?, ?)",
+            (operator, action, conversation_id, now, used_suggestion),
+        )
+
+    def audit_log(self, conversation_id: str) -> list[AuditEntry]:
+        """The audit rows for a Conversation id, oldest first (kept after the Conversation is purged)."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM audit WHERE conversation_id = ? ORDER BY id", (conversation_id,)).fetchall()
         return [
-            Handoff(
-                id=r["id"],
+            AuditEntry(
+                operator=r["operator"],
+                action=r["action"],
                 conversation_id=r["conversation_id"],
-                brief=json.loads(r["brief"]),
                 created_at=datetime.fromisoformat(r["created_at"]),
-                claimed_by=r["claimed_by"],
-                claimed_at=_when(r["claimed_at"]),
-                outcome=r["outcome"],
-                ended_at=_when(r["ended_at"]),
+                used_suggestion=None if r["used_suggestion"] is None else bool(r["used_suggestion"]),
             )
             for r in rows
         ]
+
+    def queue(self) -> list[Handoff]:
+        """The open Handoffs of Conversations in `waiting_human`, oldest first (Operator side only)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT h.* FROM handoffs h JOIN conversations c ON c.id = h.conversation_id"
+                " WHERE c.mode = 'waiting_human' AND h.ended_at IS NULL ORDER BY h.created_at, h.id"
+            ).fetchall()
+        return [_handoff(r) for r in rows]
 
     def turns(self, conversation_id: str, after: int = 0) -> list[Turn]:
         """Turns of the Conversation with id > `after` (default: all), oldest first. No owner check: callers check first."""
@@ -255,13 +370,4 @@ class Store:
             rows = conn.execute(
                 "SELECT * FROM conversations WHERE owner = ? ORDER BY updated_at DESC, rowid DESC", (owner,)
             ).fetchall()
-        return [
-            Conversation(
-                id=r["id"],
-                owner=r["owner"],
-                created_at=datetime.fromisoformat(r["created_at"]),
-                updated_at=datetime.fromisoformat(r["updated_at"]),
-                mode=r["mode"],
-            )
-            for r in rows
-        ]
+        return [_conversation(r) for r in rows]

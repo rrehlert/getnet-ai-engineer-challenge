@@ -12,10 +12,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.auth import AuthSettings, InvalidToken, Principal
-from app.graph import HISTORY_TURNS, Agent, Intent, Source, agent_for, build_graph
+from app.errors import AuthError
+from app.errors import error_response as _error
+from app.graph import HISTORY_TURNS, Agent, Intent, Node, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy, log_request, setup_logging
+from app.operator import operator_router
 from app.store import Mode, NewTurn, Role, Store
 
 log = logging.getLogger(__name__)
@@ -104,20 +107,6 @@ def build_default_graph(index):
     )
 
 
-def _error(status: int, code: str, message: str, trace_id: str, headers: dict | None = None) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"error": {"code": code, "message": message}, "trace_id": trace_id},
-        headers=headers,
-    )
-
-
-class AuthError(Exception):
-    def __init__(self, status: int, code: str, message: str):
-        super().__init__(message)
-        self.status, self.code, self.message = status, code, message
-
-
 def create_app(
     graph: Any = None,
     load_index: Callable[[], Any] | None = None,
@@ -126,6 +115,7 @@ def create_app(
     log_privacy: LogPrivacy | None = None,
     auth: AuthSettings | None = None,
     store: Store | None = None,
+    escalator: Node | None = None,
 ) -> FastAPI:
     """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted.
 
@@ -142,6 +132,9 @@ def create_app(
 
     `store` (Conversations and Turns) defaults to the SQLite file in `STATE_DIR`,
     resolved at startup like `log_privacy`.
+
+    `escalator` (the Escalator Agent that rewrites a stale Handoff Brief on an
+    Operator's claim) defaults to one on `LLM_MODEL`, built on first use.
 
     `load_index` runs in a background thread at startup; until it returns,
     `/health` and `/chat` answer 503. Without it there is no index to wait for.
@@ -176,6 +169,16 @@ def create_app(
     app.state.log_privacy = log_privacy
     app.state.auth = auth
     app.state.store = store
+    app.state.escalator = escalator
+
+    def get_escalator() -> Node:
+        if app.state.escalator is None:
+            from app.escalator import make_escalator
+            from app.llm import make_chat_model
+            from app.settings import get_settings
+
+            app.state.escalator = make_escalator(make_chat_model(get_settings()))
+        return app.state.escalator
 
     def get_store() -> Store:
         if app.state.store is None:
@@ -427,6 +430,10 @@ def create_app(
                     sources=[Source(url=s["url"], title=s["title"]) for s in t.sources], created_at=t.created_at)
             for t in get_store().turns(conversation_id, after=after)
         ])
+
+    app.include_router(operator_router(
+        principal=principal, store=get_store, today=lambda: get_auth().clock().date(), escalator=get_escalator,
+    ))
 
     return app
 
