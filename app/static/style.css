@@ -1,0 +1,72 @@
+/* Merchant Support (demo). Getnet red (--gnt-red #ec0000, from getnet.com.br's header.min.css), white surfaces, neutral greys. */
+:root {
+  --red: #ec0000;
+  --red-dark: #c40000;
+  --red-tint: #fbe4e4;
+  --text: #282828;
+  --muted: #66707a;
+  --line: #e1e6eb;
+  --surface: #ffffff;
+  --page: #f5f7fa;
+  --radius: 8px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--page);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); }
+[hidden] { display: none !important; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; background: var(--surface); border-bottom: 3px solid var(--red);
+}
+.title { margin: 0; font-size: 1.15rem; }
+.session { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.badge {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  background: var(--red-tint); color: var(--red-dark); font-size: 0.8rem; font-weight: 600;
+}
+.muted { color: var(--muted); font-size: 0.9rem; }
+
+.main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+@media (min-width: 800px) { .main.anonymous { grid-template-columns: 320px 1fr; align-items: start; } }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+.card h2 { margin: 0 0 12px; font-size: 1rem; }
+
+label { display: block; font-size: 0.85rem; color: var(--muted); margin: 8px 0 4px; }
+input, select, textarea {
+  width: 100%; padding: 8px 10px; font: inherit; color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--red); outline-offset: -1px; }
+textarea { resize: vertical; min-height: 60px; }
+
+.button {
+  padding: 8px 14px; font: inherit; font-weight: 600; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--red); background: var(--red); color: #fff;
+}
+.button:hover { background: var(--red-dark); border-color: var(--red-dark); }
+.button:disabled { opacity: 0.5; cursor: default; }
+.button.secondary { background: var(--surface); color: var(--red); }
+.button.secondary:hover { background: var(--red-tint); }
+.row { display: flex; gap: 8px; margin-top: 12px; }
+
+.notice { padding: 8px 12px; border-radius: 6px; background: var(--red-tint); color: var(--red-dark); margin-bottom: 12px; }
+.error { color: var(--red-dark); font-size: 0.9rem; margin-top: 8px; }
+
+.chat { display: flex; flex-direction: column; min-height: 420px; }
+.messages { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 60vh; padding: 4px 0 12px; }
+.msg { max-width: 85%; padding: 8px 12px; border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user { align-self: flex-end; background: var(--red); color: #fff; }
+.msg.assistant, .msg.operator { align-self: flex-start; background: var(--page); border: 1px solid var(--line); }
+.msg .author { display: block; font-size: 0.75rem; font-weight: 600; color: var(--muted); margin-bottom: 2px; }
+.msg.user .author { color: #fff; opacity: 0.85; }
+.msg.pending { color: var(--muted); font-style: italic; }
+.sources { margin-top: 6px; font-size: 0.85rem; white-space: normal; }
+.sources ul { margin: 4px 0 0; padding-left: 18px; }
+.sources a { color: var(--red-dark); }
+.composer { display: flex; gap: 8px; align-items: flex-end; border-top: 1px solid var(--line); padding-top: 12px; }
+.composer textarea { flex: 1; }

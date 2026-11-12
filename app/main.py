@@ -2,16 +2,19 @@ import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.auth import AuthSettings, InvalidToken, Principal
+from app.auth import OPERATORS, AuthSettings, InvalidToken, Principal, role_for
+from app.auth import Role as PrincipalRole
 from app.errors import AuthError
 from app.errors import error_response as _error
 from app.graph import HISTORY_TURNS, Agent, Intent, Node, Source, agent_for, build_graph
@@ -22,6 +25,13 @@ from app.operator import operator_router
 from app.store import Mode, ModeChanged, NewTurn, Role, Store
 
 log = logging.getLogger(__name__)
+
+# The demo client (one static page, no build step), served at `/` and `/static/`.
+STATIC_DIR = Path(__file__).parent / "static"
+# Only what the page needs from its own origin: no inline script, no third party.
+PAGE_CSP = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+# A fixed id with no fixture account, so the demo can show "account not found".
+UNKNOWN_DEMO_USER = "nobody"
 
 
 class ChatRequest(BaseModel):
@@ -39,6 +49,15 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class DevUser(BaseModel):
+    id: str
+    role: PrincipalRole
+
+
+class DevUsers(BaseModel):
+    users: list[DevUser]
 
 
 class ChatResponse(BaseModel):
@@ -309,6 +328,19 @@ def create_app(
         """Demo stand-in for an identity provider: "log in as" any user id."""
         return LoginResponse(access_token=get_auth().issue(request.user_id))
 
+    @app.get("/dev/users", response_model=DevUsers, dependencies=[Depends(demo_login_enabled)])
+    def dev_users():
+        """Who the demo can log in as: fixture Merchants, mock Operators and one unknown id."""
+        from app.support import load_merchants
+
+        ids = [*load_merchants(get_auth().clock().date()), *sorted(OPERATORS), UNKNOWN_DEMO_USER]
+        return DevUsers(users=[DevUser(id=i, role=role_for(i)) for i in ids])
+
+    @app.get("/", include_in_schema=False)
+    def page():
+        """The demo client."""
+        return FileResponse(STATIC_DIR / "index.html", headers={"Content-Security-Policy": PAGE_CSP})
+
     @app.get("/me")
     def me(caller: Annotated[Principal, Depends(principal)]):
         """The principal and, for a Merchant, their fixture account (null when there is none)."""
@@ -469,6 +501,8 @@ def create_app(
                     sources=[Source(url=s["url"], title=s["title"]) for s in t.sources], created_at=t.created_at)
             for t in get_store().turns(conversation_id, after=after)
         ])
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     app.include_router(operator_router(
         principal=principal, store=get_store, today=lambda: get_auth().clock().date(), escalator=get_escalator,
