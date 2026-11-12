@@ -303,19 +303,14 @@ function anonymousChat() {
 
 // Each view gets (container, claims), renders into the container and may return a cleanup function.
 // merchantView: app/static/merchant.js (loaded before this file).
-
-function operatorView(container, claims) {
-  container.append(el("section", { class: "card" },
-    el("h2", {}, "Operator view"),
-    el("p", { class: "muted" }, "Logged in as " + claims.sub + ". Queue and Review are coming soon.")));
-}
+// operatorView: app/static/operator.js (loaded after this file; registers itself in ROLE_VIEWS).
 
 function unknownRoleView(container, claims) {
   container.append(el("section", { class: "card" }, el("h2", {}, "Unknown role"),
     el("p", {}, "This page has no view for role " + claims.role + ".")));
 }
 
-const ROLE_VIEWS = { merchant: merchantView, operator: operatorView };
+const ROLE_VIEWS = { merchant: merchantView };
 
 // ---------- start ----------
 

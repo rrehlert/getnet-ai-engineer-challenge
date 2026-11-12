@@ -102,3 +102,63 @@ textarea { resize: vertical; min-height: 60px; }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .account-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 0.9rem; }
 .account-list .muted { font-size: 0.8rem; }
+/* Operator view */
+.op-layout { display: grid; gap: 16px; }
+@media (min-width: 900px) { .op-layout { grid-template-columns: 300px 1fr; align-items: start; } }
+.op-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.op-tab {
+  flex: 1; padding: 8px; font: inherit; font-weight: 600; cursor: pointer; color: var(--muted);
+  background: none; border: none; border-bottom: 3px solid transparent;
+}
+.op-tab.active { color: var(--red-dark); border-bottom-color: var(--red); }
+.op-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.op-item {
+  width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 8px 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+}
+.op-item:hover { background: var(--page); }
+.op-item.selected { border-color: var(--red); background: var(--red-tint); }
+.op-item-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.op-item-category { font-weight: 600; font-size: 0.9rem; }
+.op-age { margin-left: auto; font-size: 0.8rem; }
+.op-item-ask { margin-top: 4px; font-size: 0.9rem; overflow-wrap: anywhere; }
+.op-priority-high { background: var(--red); color: #fff; }
+.op-priority-normal { background: var(--red-tint); color: var(--red-dark); }
+.op-priority-low, .op-category, .op-mode { background: var(--page); color: var(--muted); border: 1px solid var(--line); }
+.op-mode-waiting_human { background: var(--red-tint); color: var(--red-dark); border-color: var(--red-tint); }
+.op-mode-human { background: var(--red); color: #fff; border-color: var(--red); }
+.op-flag { background: #fff4d6; color: #7a5a00; }
+.op-detail h2 { margin-bottom: 6px; }
+.op-detail h3 { margin: 0 0 8px; font-size: 0.95rem; }
+.op-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.op-id { font-family: ui-monospace, monospace; font-size: 0.75rem; }
+.op-actions { flex-wrap: wrap; }
+.op-columns { display: grid; gap: 16px; margin-top: 12px; }
+@media (min-width: 1000px) { .op-columns { grid-template-columns: minmax(0, 1fr) minmax(0, 340px); align-items: start; } }
+.op-col-side { display: grid; gap: 12px; }
+.op-col-side .card { padding: 12px; }
+.op-turns { max-height: 50vh; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }
+.op-composer { margin-top: 12px; }
+.op-composer .row { align-items: center; }
+.op-hint { font-size: 0.8rem; }
+.op-brief-tags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.op-dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; font-size: 0.85rem; }
+.op-dl dt { color: var(--muted); }
+.op-dl dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.op-dl ul { margin: 0; padding-left: 16px; }
+.op-suggestion { background: var(--page); border-left: 3px solid var(--red); padding: 4px 8px; }
+.op-section { margin-top: 8px; font-size: 0.85rem; }
+.op-section summary { cursor: pointer; font-weight: 600; text-transform: capitalize; }
+.op-records { display: grid; gap: 8px; margin-top: 6px; }
+.op-records .op-dl { border-top: 1px solid var(--line); padding-top: 6px; }
+.op-table-wrap { overflow-x: auto; margin-top: 6px; }
+.op-table { border-collapse: collapse; font-size: 0.8rem; }
+.op-table th, .op-table td { border-bottom: 1px solid var(--line); padding: 3px 6px; text-align: left; white-space: nowrap; }
+.op-table th { color: var(--muted); font-weight: 600; }
+.op-panels { display: grid; gap: 12px; margin-top: 16px; }
+.op-panels:empty { display: none; }
+/* In the Operator's transcript the Agent's own replies sit on the right, the Merchant's on the left. */
+.op-turns .msg.user { align-self: flex-start; background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+.op-turns .msg.user .author { color: var(--muted); opacity: 1; }
+.op-turns .msg.operator { align-self: flex-end; background: var(--red); color: #fff; border-color: var(--red); }
+.op-turns .msg.operator .author { color: #fff; opacity: 0.85; }
