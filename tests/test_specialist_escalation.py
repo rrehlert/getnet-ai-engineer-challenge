@@ -1,11 +1,13 @@
 """Ticket 05: the Knowledge and Customer Support Agents escalate via `escalate_to_human(reason)`."""
 
 import pytest
+from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
-from app.graph import build_graph
+from app.graph import EMPTY_ANSWER_FALLBACK, build_graph
 from app.store import Store
 from app.support import make_support
+from tests.test_auth import make_app
 from tests.test_conversations import chat, client_with
 from tests.test_escalation import TRANSFER, SpyEscalator
 from tests.test_graph import fake_route, fake_specialist
@@ -135,3 +137,36 @@ def test_specialist_prompts_say_when_to_escalate(module):
     assert "escalate_to_human" in prompt
     for case in ("stuck", "don't cover", "human decision"):
         assert case in prompt
+
+
+def test_anonymous_visitor_gets_no_escalation_tool_or_rule_in_the_knowledge_agent():
+    model = scripted(final("O Pix cai na hora."))
+
+    update = knowledge_with(model)({"message": "como funciona o pix?", "user_id": None})
+
+    assert "escalate_to_human" not in model.bound
+    assert "escalate_to_human" not in model.seen[0][0].content
+    assert update["answer"] == "O Pix cai na hora."
+
+
+def test_merchant_still_gets_the_escalation_tool_and_rule_in_the_knowledge_agent():
+    model = scripted(final("O Pix cai na hora."))
+
+    knowledge_with(model)({"message": "como funciona o pix?", "user_id": "cliente1988"})
+
+    assert "escalate_to_human" in model.bound
+    assert "escalate_to_human" in model.seen[0][0].content
+
+
+def test_an_escalation_reason_without_a_merchant_ends_with_the_empty_answer_fallback_never_empty():
+    def escalating(state):
+        return {"answer": "", "escalation_reason": "can't resolve", "steps": ["knowledge"]}
+
+    graph, escalator = graph_with(knowledge=escalating)
+
+    response = TestClient(make_app(graph=graph)).post("/chat", json={"message": "como funciona o pix?"})
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == EMPTY_ANSWER_FALLBACK
+    assert response.json()["mode"] == "bot"
+    assert escalator.states == []

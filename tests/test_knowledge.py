@@ -10,11 +10,13 @@ TODAY = date(2026, 10, 30)
 
 
 class ScriptedModel(GenericFakeChatModel):
-    """Replays scripted AIMessages; records the messages seen on each call."""
+    """Replays scripted AIMessages; records the tools bound and the messages seen on each call."""
 
+    bound: list = []
     seen: list = []
 
     def bind_tools(self, tools, **kwargs):
+        self.bound = [t.name for t in tools]
         return self
 
     def _generate(self, messages, *args, **kwargs):

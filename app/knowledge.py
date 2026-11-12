@@ -112,7 +112,7 @@ def default_web_search(tavily_api_key: str) -> BaseTool:
     return make_web_search(tavily, ddg)
 
 
-PROMPT = """You are the Knowledge Agent of Getnet's support assistant for merchants.
+_BASE_PROMPT = """You are the Knowledge Agent of Getnet's support assistant for merchants.
 Today is {today} ({weekday}).
 
 Tools:
@@ -128,35 +128,44 @@ Rules:
 - Ground every claim in what the tools returned. Never invent fees, rates, prices,
   deadlines or procedures.
 - If the tools return nothing relevant to a general question, say plainly that you
-  didn't find the information. For a Getnet case you can't resolve, escalate (below).
+  didn't find the information.{cant_resolve}
 - Use at most a few searches, then answer with what you have.
 - Do not list URLs or sources in the answer; they are attached separately.
 - If a search misses, retry once with different Portuguese wording (synonyms,
   the product's name, the FAQ question form) before saying it wasn't found.
 - Reply in the same language as the Merchant's Message, even when tool data is in
-  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical.
+  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical."""
 
-""" + ESCALATION_RULE
+# A Merchant's Agent may escalate; an anonymous visitor has no Conversation to hand over,
+# so their Agent gets neither the rule nor the `escalate_to_human` tool.
+PROMPT = _BASE_PROMPT.replace(
+    "{cant_resolve}", " For a Getnet case you can't resolve, escalate (below)."
+) + "\n\n" + ESCALATION_RULE
+ANONYMOUS_PROMPT = _BASE_PROMPT.replace("{cant_resolve}", "")
 
 
-def build_prompt(today: date) -> str:
-    return PROMPT.format(today=today.isoformat(), weekday=today.strftime("%A"))
+def build_prompt(today: date, anonymous: bool = False) -> str:
+    prompt = ANONYMOUS_PROMPT if anonymous else PROMPT
+    return prompt.format(today=today.isoformat(), weekday=today.strftime("%A"))
 
 
 def make_knowledge(model: BaseChatModel, tools: list[BaseTool], today: Callable[[], date] = date.today) -> Node:
-    @dynamic_prompt
-    def knowledge_prompt(request: ModelRequest) -> str:
-        return build_prompt(today())
+    def agent(anonymous: bool):
+        @dynamic_prompt
+        def knowledge_prompt(request: ModelRequest) -> str:
+            return build_prompt(today(), anonymous)
 
-    agent = create_agent(
-        model,
-        tools=tools,
-        # stop_on_escalation last: its after_model hook runs first, so an escalation is never refused by the limit.
-        middleware=[knowledge_prompt, ToolCallLimitMiddleware(run_limit=KNOWLEDGE_TOOL_CALL_LIMIT), stop_on_escalation],
-    )
+        middleware: list = [knowledge_prompt, ToolCallLimitMiddleware(run_limit=KNOWLEDGE_TOOL_CALL_LIMIT)]
+        if not anonymous:
+            # Last: its after_model hook runs first, so an escalation is never refused by the limit.
+            middleware.append(stop_on_escalation)
+        return create_agent(model, tools=tools, middleware=middleware)
+
+    for_merchant, for_anonymous = agent(anonymous=False), agent(anonymous=True)
 
     def knowledge(state: GraphState) -> dict:
-        out = agent.invoke(
+        runner = for_anonymous if state["user_id"] is None else for_merchant
+        out = runner.invoke(
             {"messages": conversation_messages(state)},
             config={"recursion_limit": KNOWLEDGE_RECURSION_LIMIT},
         )
