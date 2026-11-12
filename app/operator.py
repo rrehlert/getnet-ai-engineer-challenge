@@ -48,6 +48,14 @@ class Queue(BaseModel):
     conversations: list[QueueItem]
 
 
+class MineItem(QueueItem):
+    claimed_at: datetime  # when the caller claimed it
+
+
+class MineList(BaseModel):
+    conversations: list[MineItem]
+
+
 class HandoffOut(BaseModel):
     brief: HandoffBrief
     created_at: datetime
@@ -147,6 +155,21 @@ def operator_router(
                 customer_ask=h.brief["customer_ask"],
             )
             for h in store().queue()
+        ])
+
+    @router.get("/mine", response_model=MineList)
+    def mine(caller: Operator):
+        """Conversations in `human` the caller claimed (open Handoff), newest claim first, with the brief's key fields."""
+        return MineList(conversations=[
+            MineItem(
+                conversation_id=h.conversation_id,
+                created_at=h.created_at,
+                category=h.brief["category"],
+                priority=h.brief["priority"],
+                customer_ask=h.brief["customer_ask"],
+                claimed_at=h.claimed_at,
+            )
+            for h in store().mine(caller.sub)
         ])
 
     def view(conversation: Conversation) -> ConversationDetail:

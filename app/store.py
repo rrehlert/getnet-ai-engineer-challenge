@@ -462,6 +462,17 @@ class Store:
             ).fetchall()
         return [_handoff(r) for r in rows]
 
+    def mine(self, operator: str) -> list[Handoff]:
+        """The open Handoffs `operator` claimed, of Conversations in `human`, newest claim first (Operator side only)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT h.* FROM handoffs h JOIN conversations c ON c.id = h.conversation_id"
+                " WHERE c.mode = 'human' AND h.ended_at IS NULL AND h.claimed_by = ?"
+                " ORDER BY h.claimed_at DESC, h.id DESC",
+                (operator,),
+            ).fetchall()
+        return [_handoff(r) for r in rows]
+
     def turns(self, conversation_id: str, after: int = 0) -> list[Turn]:
         """Turns of the Conversation with id > `after` (default: all), oldest first. No owner check: callers check first."""
         with self._connect() as conn:
