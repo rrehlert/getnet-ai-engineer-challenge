@@ -110,6 +110,15 @@ class Handoff:
     brief_turn_id: int | None = None  # the last Turn the brief was written from
 
 
+class ModeChanged(Exception):  # noqa: N818 - a refusal, not a failure
+    """A conditional write refused: the Conversation is no longer in a Mode the caller read
+    (another request escalated it, or an Operator acted). `mode` is its Mode now (None: gone)."""
+
+    def __init__(self, mode: Mode | None):
+        super().__init__(f"conversation is now in mode {mode!r}")
+        self.mode = mode
+
+
 AuditAction = Literal["claim", "reply", "handback", "close", "reviewed"]
 # An Operator action's outcome: done; refused because another Operator holds the claim; or refused by the Mode.
 ActionResult = Literal["done", "not_claimer", "wrong_mode"]
@@ -256,10 +265,28 @@ class Store:
             ).fetchall()
         return [_conversation(r) for r in rows]
 
-    def append_turns(self, conversation_id: str, turns: Sequence[NewTurn]) -> None:
-        """Append `turns` in order, in one transaction, and bump the Conversation's `updated_at`."""
+    def append_turns(
+        self, conversation_id: str, turns: Sequence[NewTurn], while_in: Sequence[Mode] | None = None,
+    ) -> None:
+        """Append `turns` in order, in one transaction, and bump the Conversation's `updated_at`.
+        With `while_in`, only if the Mode is one of them; else `ModeChanged` and nothing is stored."""
         with self._connect() as conn:
-            self._append(conn, conversation_id, turns, self._now())
+            now = self._now()
+            if while_in is not None:
+                self._require_mode(conn, conversation_id, while_in, now)
+            self._append(conn, conversation_id, turns, now)
+
+    @staticmethod
+    def _require_mode(conn: sqlite3.Connection, conversation_id: str, modes: Sequence[Mode], now: str) -> None:
+        """One conditional update decides, inside the caller's transaction, so a racing Mode
+        change can't slip in between the check and the writes; raises `ModeChanged` (rolls back)."""
+        marks = ", ".join("?" for _ in modes)
+        if conn.execute(
+            f"UPDATE conversations SET updated_at = ? WHERE id = ? AND mode IN ({marks})",
+            (now, conversation_id, *modes),
+        ).rowcount != 1:
+            row = conn.execute("SELECT mode FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+            raise ModeChanged(None if row is None else row["mode"])
 
     @staticmethod
     def _append(conn: sqlite3.Connection, conversation_id: str, turns: Sequence[NewTurn], now: str) -> None:
@@ -277,12 +304,16 @@ class Store:
         """An Escalation in one transaction: create the Conversation if `conversation_id` is None,
         append `turns`, open a Handoff with `brief` and set Mode `waiting_human`; returns the id.
 
-        A second open Handoff raises `sqlite3.IntegrityError` and nothing is stored.
-        Callers check ownership first (as for `append_turns`).
+        Only from `bot`: in any other Mode (e.g. a racing Escalation got there first) it raises
+        `ModeChanged` and nothing is stored. Callers check ownership first (as for `append_turns`).
         """
         now = self._now()
         with self._connect() as conn:
-            cid = conversation_id if conversation_id is not None else self._create(conn, owner, now)
+            if conversation_id is None:
+                cid = self._create(conn, owner, now)
+            else:
+                cid = conversation_id
+                self._require_mode(conn, cid, ("bot",), now)
             self._append(conn, cid, turns, now)
             conn.execute(
                 "INSERT INTO handoffs (conversation_id, brief, brief_turn_id, created_at)"

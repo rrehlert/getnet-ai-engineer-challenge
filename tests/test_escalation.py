@@ -7,7 +7,7 @@ from contextlib import closing
 import pytest
 
 from app.graph import build_graph
-from app.store import NewTurn, Store
+from app.store import ModeChanged, NewTurn, Store
 from tests.test_chat_mode import NeverInvokedGraph
 from tests.test_conversations import chat, client_with
 from tests.test_graph import fake_route, fake_specialist
@@ -264,7 +264,10 @@ def test_at_most_one_open_handoff_per_conversation(store):
     cid = store.create_conversation("cliente1988")
     store.escalate(cid, "cliente1988", [NewTurn("user", "pessoa")], BRIEF)
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(ModeChanged):  # only from `bot`
+        store.escalate(cid, "cliente1988", [NewTurn("user", "pessoa de novo")], BRIEF)
+    store.set_mode(cid, "bot")
+    with pytest.raises(sqlite3.IntegrityError):  # the unique index is the backstop
         store.escalate(cid, "cliente1988", [NewTurn("user", "pessoa de novo")], BRIEF)
 
     assert len(store.handoffs(cid)) == 1
