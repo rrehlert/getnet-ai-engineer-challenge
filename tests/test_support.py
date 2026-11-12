@@ -108,3 +108,28 @@ def test_unknown_merchant_cannot_call_tools():
     prompt = model.seen[0][0].content
     assert "wasn't found" in prompt
     assert "cliente9999" in prompt
+
+
+def test_prior_turns_reach_the_model_before_the_current_message_and_facts_come_from_fresh_tool_calls():
+    from langchain_core.messages import HumanMessage
+
+    model = scripted(call("get_terminal_status"), final("Your Smart terminal is offline."))
+    support = make_support(model, today=lambda: TODAY)
+    history = [
+        {"role": "user", "content": "my card machine is offline"},
+        {"role": "assistant", "content": "Which one?"},
+    ]
+
+    update = support({"message": "it's the Smart one", "user_id": "cliente2024", "history": history})
+
+    [_system, *rest] = model.seen[0]
+    assert [(type(m), m.content) for m in rest] == [
+        (HumanMessage, "my card machine is offline"),
+        (AIMessage, "Which one?"),
+        (HumanMessage, "it's the Smart one"),
+    ]
+    assert update["answer"] == "Your Smart terminal is offline."
+    assert update["steps"] == ["support", "get_terminal_status"]
+    assert update["tokens"] == 37  # only this run's model calls
+    [evidence] = update["evidence"]
+    assert evidence["tool"] == "get_terminal_status"

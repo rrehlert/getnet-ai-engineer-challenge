@@ -105,3 +105,30 @@ def test_router_prompt_for_a_merchant_does_not_say_not_logged_in():
     make_router(model)(STATE)
 
     assert "not logged in" not in str(model.seen[0].content)
+
+
+HISTORY = [
+    {"role": "user", "content": "my card machine is offline"},
+    {"role": "assistant", "content": "Which card machine is it?"},
+]
+
+
+def test_router_gets_prior_turns_as_messages_before_the_current_message():
+    model = FakeStructuredModel(Route(intent="support"))
+
+    make_router(model)({"message": "it's the Smart one", "user_id": "cliente1988", "history": HISTORY})
+
+    assert [(type(m).__name__, m.content) for m in model.seen[1:]] == [
+        ("HumanMessage", "my card machine is offline"),
+        ("AIMessage", "Which card machine is it?"),
+        ("HumanMessage", "it's the Smart one"),
+    ]
+
+
+def test_router_prompt_says_to_classify_the_latest_message_in_light_of_the_history():
+    from app.router import system_prompt
+
+    prompt = system_prompt("cliente1988")
+
+    assert "latest Message" in prompt
+    assert "history" in prompt

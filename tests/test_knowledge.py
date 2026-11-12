@@ -197,3 +197,25 @@ def test_no_evidence_when_no_tool_was_called():
     update = knowledge_with(scripted(final("Não encontrei.")))({"message": "x", "user_id": "u"})
 
     assert update["evidence"] == []
+
+
+def test_prior_turns_reach_the_model_as_messages_before_the_current_message():
+    from langchain_core.messages import HumanMessage
+
+    model = scripted(final("Sim, a Smart aceita aproximação."))
+    history = [
+        {"role": "user", "content": "Does Get Smart take Pix?"},
+        {"role": "assistant", "content": "Yes."},
+    ]
+
+    update = knowledge_with(model)({"message": "and contactless?", "user_id": "u", "history": history})
+
+    [system, *rest] = model.seen[0]
+    assert isinstance(system, SystemMessage)
+    assert [(type(m), m.content) for m in rest] == [
+        (HumanMessage, "Does Get Smart take Pix?"),
+        (AIMessage, "Yes."),
+        (HumanMessage, "and contactless?"),
+    ]
+    assert update["answer"] == "Sim, a Smart aceita aproximação."
+    assert update["evidence"] == []

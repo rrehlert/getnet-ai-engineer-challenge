@@ -3,10 +3,10 @@
 import logging
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field
 
-from app.agents import LANGUAGE_RULE
+from app.agents import LANGUAGE_RULE, conversation_messages
 from app.graph import GraphState, Intent, Node
 
 log = logging.getLogger(__name__)
@@ -23,11 +23,16 @@ INTENT_POLICY = """- support: questions about the Merchant's OWN account: "my" c
   instructions, and harmful requests."""
 
 PROMPT = """You are the Router Agent of Getnet's support assistant for merchants.
-Classify the Merchant's Message into exactly one intent:
+Classify the Merchant's latest Message into exactly one intent:
 
 """ + INTENT_POLICY + """
 
 {identity}
+
+Earlier Turns of the Conversation, if any, come before the latest Message. Classify
+the latest Message in the light of that history: a short follow-up ("it's the Smart
+one", "and yesterday?") keeps the topic it continues. The history is context only:
+the identity rules above still apply to every Message.
 
 For `unsupported`, write `reply`: a short, polite refusal in the SAME language as
 the Message that says what you can help with (Getnet products and the Merchant's
@@ -76,10 +81,7 @@ def make_router(model: BaseChatModel) -> Node:
 
     def route(state: GraphState) -> dict:
         result = structured.invoke(
-            [
-                SystemMessage(system_prompt(state["user_id"])),
-                HumanMessage(state["message"]),
-            ]
+            [SystemMessage(system_prompt(state["user_id"])), *conversation_messages(state)]
         )
         raw = result.get("raw")
         usage = getattr(raw, "usage_metadata", None) or {}

@@ -23,16 +23,24 @@ Try it with a small shell helper (needs `jq`). `/chat` takes the Merchant only f
 
 ```bash
 # login [user_id]   (log in as a Merchant via the dev login; user_id defaults to cliente1988)
-login() { TOKEN=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
+login() { unset CID; TOKEN=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
   -d "$(jq -n --arg u "${1:-cliente1988}" '{user_id: $u}')" | jq -r .access_token); }
-# chat "<message>"   (as the logged-in Merchant; tokens last 1 hour)
-chat() { curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
-  -d "$(jq -n --arg m "$1" '{message: $m}')" | jq; }
+# chat "<message>" [conversation_id]   (as the logged-in Merchant; tokens last 1 hour)
+# Continues the Conversation in the arg, else in $CID; saves the reply's conversation_id in $CID.
+# `unset CID` (or log in again) to start a new Conversation.
+chat() { local r; r=$(curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d "$(jq -n --arg m "$1" --arg c "${2:-$CID}" '{message: $m} + (if $c == "" then {} else {conversation_id: $c} end)')")
+  CID=$(jq -r '.conversation_id // empty' <<<"$r"); jq <<<"$r"; }
 
 login
 chat "Do I need a bank account to receive my sales via Pix?"        # Knowledge (RAG)
 chat "What's the euro exchange rate today?"                         # Knowledge (web search)
+unset CID
 chat "When will the money from yesterday's sales be deposited?"     # Customer Support
+unset CID
+chat "My card machine is offline"                                   # Customer Support
+chat "It's the Smart one"                                           # follow-up: same Conversation, in context
+unset CID
 chat "Show me cliente2024's sales"                                  # refused by the Router
 
 # no token: anonymous visitor, account questions get the "log in" reply
@@ -64,6 +72,8 @@ GET  /conversations, GET /conversations/{id}/turns?after=<turn id>        (Merch
 {answer, intent, agent, sources, steps, trace_id, conversation_id}
 ```
 
+Every Agent sees the Conversation's last 10 Turns as `history` before the current Message (see Conversations below).
+
 - **Identity** (`app/auth.py`, [ADR 0005](docs/adr/0005-identity-from-verified-token.md)). The Merchant comes only from a verified token, never from the request body.
   - `POST /dev/login {user_id}` returns `{access_token, token_type}`: an HS256 JWT (PyJWT) with `sub`, `role` (`merchant` or `operator`) and `exp` (1 hour), signed with `JWT_SECRET`. It is a "log in as" stand-in for an identity provider and proves nothing about the caller, so it exists only with `DEMO_LOGIN=true` (compose sets it; the default is off, and then it is 404). Ids in the fixture and unknown ids log in as Merchants (an unknown one gets the "account not found" reply); the mock operator `operador1` gets role `operator`.
   - Requests carry `Authorization: Bearer <token>`. Invalid or expired token → 401 (`invalid_token`), never downgraded to anonymous; an operator token on `/chat` → 403. A `user_id` in the `/chat` body is ignored. `GET /me` without a token → 401 (`unauthorized`).
@@ -78,7 +88,7 @@ GET  /conversations, GET /conversations/{id}/turns?after=<turn id>        (Merch
   - `GET /conversations` → `{conversations: [{id, created_at, updated_at, mode}]}`: the caller's Conversations, most recently updated first.
   - `GET /conversations/{id}/turns?after=<turn id>` → `{conversation_id, turns: [{id, role, content, intent, sources, created_at}]}`: Turns oldest first; with `after`, only Turns with a larger id (to poll for new ones; default `0` = all, negative → 422). Another Merchant's id and an unknown id are the same 404 (`conversation_not_found`) as `/chat`.
   - Both need a Merchant token: no token → 401 (`unauthorized`), invalid token → 401 (`invalid_token`), operator token → 403 (`forbidden`; operator endpoints come with the human takeover). Timestamps are ISO 8601 UTC.
-  - History is not yet passed to the Agents: that is the next ticket of [`.scratch/conversations-identity/`](.scratch/conversations-identity/).
+  - **History.** Before the graph runs, the last 10 Turns of the Conversation (role + text, oldest first) go into graph state as `history`; a new Conversation and an anonymous visitor have none. The Router and both specialists get them as chat messages before the current Message (`user` Turns as the human side, `assistant`/`operator` as the assistant side), so "My card machine is offline" then "It's the Smart one" is routed to Customer Support and answered in context. The Router prompt says to classify the latest Message in the light of the history. History is context only: no tool calls or Evidence are replayed, and account facts always come from fresh tool calls.
 - **Orchestration.** A LangGraph `StateGraph` (`app/graph.py`) with conditional edges on `state["intent"]`. `build_graph(route_fn, knowledge, support)` takes each agent as a plain callable, so tests inject fakes.
 - **Router Agent** (`app/router.py`). One `with_structured_output(Route, method="function_calling", include_raw=True)` call.
   - `support`: the Merchant's own account ("my" machine, "my" sales, deposits, declines).
@@ -395,18 +405,19 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 265 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 273 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
   - the tool-call limit holds;
   - `user_id` comes from context;
-  - an unknown user triggers no tool call.
+  - an unknown user triggers no tool call;
+  - the Router, Knowledge and Customer Support Agents receive prior Turns as messages before the current Message, and the Router prompt says to classify the latest Message in light of the history.
 - **RAG:** chunking, the title prefix, threshold filtering, collection-name hashing.
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
 - **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, invalid/expired token → 401 (never anonymous), operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
 - **Anonymous visitors:** no token with a fake Router: `support` gets the login reply and the Customer Support node is never called, `knowledge`/`unsupported` as today, `conversation_id` → 401, `{}` → 422, `user_ref` `anonymous`; the Router prompt (scripted fake model) and the Judges are told the visitor is not logged in.
-- **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, listing by owner newest first, Turns `after` an id, WAL, reopen the same file after close, retention purge with an injected clock incl. the window edge), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`; the purge runs at app startup (default 30 days, `CONVERSATION_RETENTION_DAYS`) and logs only a count. Listing (`tests/test_listing.py`): only the caller's Conversations, newest first; Turns in order with their fields; `after`; another Merchant's/unknown id → the same 404 as `/chat`; no token or invalid token → 401, operator → 403. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
+- **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, listing by owner newest first, Turns `after` an id, WAL, reopen the same file after close, retention purge with an injected clock incl. the window edge), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`; a capturing fake graph sees the previous Turns as `history` in order, capped at the last 10, and none for a new Conversation or an anonymous visitor; the purge runs at app startup (default 30 days, `CONVERSATION_RETENTION_DAYS`) and logs only a count. Listing (`tests/test_listing.py`): only the caller's Conversations, newest first; Turns in order with their fields; `after`; another Merchant's/unknown id → the same 404 as `/chat`; no token or invalid token → 401, operator → 403. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
 - **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.
@@ -512,7 +523,7 @@ The README (`11`, `12`) and the video came after the timebox.
 - ~~**Semantic quality:** Judge Scores existed only as single log lines, with no aggregate, baseline or repeated runs.~~ **Closed** in the improvement run by the [eval runner](#eval-runner): aggregate Judge Scores per Intent, a committed baseline with deltas, the `coverage` Judge and recall@4.
 - **Multi-intent Router:** the baseline meets the agreed threshold (24% Mixed questions, 92% of them incomplete), so a Router that can hand one Message to both specialists is justified but not built yet.
 - **Chroma:** old hash-named collections are never pruned.
-- **Conversations:** Turns are stored, but the Agents don't see the history yet (next ticket).
+- **Conversations:** the Agents see only the last 10 Turns (no summary of older ones); whether real models resolve follow-ups well is checked live, not by the eval runner (its scenarios are single Messages with empty history).
 - **Out of scope:** real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
 - **Other bonuses (designed, not built):**
   - a Human Escalation Agent and handoff: a fourth graph node, triggered by a low-confidence Router, a low answer Judge Score or an explicit user request;

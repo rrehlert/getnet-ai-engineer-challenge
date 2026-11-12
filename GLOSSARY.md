@@ -13,7 +13,7 @@ An ordered series of Turns owned by one Merchant, identified by a random id. A M
 _Avoid_: Session, thread, chat
 
 **Turn**:
-One entry in a Conversation: a Message (`user`), its reply (`assistant`), or later a message from an Operator (`operator`). Stores the text, Intent and Sources, never Evidence.
+One entry in a Conversation: a Message (`user`), its reply (`assistant`), or later a message from an Operator (`operator`). Stores the text, Intent and Sources, never Evidence. The last 10 Turns before a Message are its history: every Agent sees them as context, but account facts always come from fresh tool calls.
 _Avoid_: Message (that is only the Merchant's side), exchange, entry
 
 **Merchant**:
