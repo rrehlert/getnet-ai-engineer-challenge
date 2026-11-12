@@ -16,4 +16,6 @@
 - [x] Eval re-run compared with baseline, result recorded
 - [x] README and diary updated
 
+## Comments
+
 Results: `IMPROVEMENT_RUN_DIARY.md`, session 3 (live check traces, restart, eval vs baseline). README: login, anonymous access, Conversations and retention were already covered by tickets 01–06; added a Quick start note that tokens need `JWT_SECRET` set to survive a restart.

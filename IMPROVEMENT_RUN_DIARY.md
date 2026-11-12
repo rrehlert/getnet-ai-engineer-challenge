@@ -183,18 +183,18 @@ Fresh `docker compose up --build` on `e78994c` with Judges on, healthy at 21:44:
 - "My card machine is offline" (trace `fcf5a92671564cab830346e2988aa994`) → `support`, `get_terminal_status`, new Conversation `c4caac36-…`. Judges: route 1.0, coverage 1.0, answer 0.0 (it disliked "yesterday" for 2026-11-11 and the empty Sources).
 - "It is the Smart one" in the same Conversation (trace `62d118cc788f4009b6ea977ac90fd183`) → `support`, answered in context: "Caixa 1 is the Getnet POS Smart (Android)". Judges: route 0.0, answer 0.0, coverage 1.0. The route Judge called the bare follow-up "likely knowledge", which is the known limitation (Judges don't see history).
 - Anonymous "Quanto eu tenho para receber amanhã?" (trace `3d7f90a599664c42970e1f05154656b6`) → `support`, `agent` `router`, steps `router, login`, bilingual login reply, `conversation_id` null, `user_ref` `anonymous`. Live Judges: route 1.0, answer 1.0, coverage 0.2 ("only asks the user to log in"). The live coverage Judge is not told about the anonymous login rule.
-- `docker compose restart` → `retention purge: deleted 0`. `GET /conversations` still lists `c4caac36-…` with its 4 Turns (ids 5–8, in order). The old token got 401 because `JWT_SECRET` was empty in `.env`, so a new secret was generated. The README Quick start now says this.
+- `docker compose restart` → `retention purge: deleted 0`. after a fresh `/dev/login`, `GET /conversations` still lists `c4caac36-…` with its 4 Turns (ids 5–8, in order). The old token got 401 because `JWT_SECRET` was empty in `.env`, so a new secret was generated. The README Quick start now says this.
 
 #### Eval re-run (ticket 07)
 
-Ran `uv run python -m scripts.eval` on `e78994c` (clean tree), 21:45:12–21:56:45. Results are in `evals/results/20261112T004519Z.json`; the baseline was not replaced.
+Ran `uv run python -m scripts.eval` on `e78994c`, 21:45:12–21:56:45. The results metadata says `dirty: true`: it is read when the run ends, and the README Quick start note was edited mid-run (no code changed). Results are in `evals/results/20261112T004519Z.json`; the baseline was not replaced.
 
 - 3 runs × 19 scenarios = 57 runs, 0 errors. The dataset hash differs from the baseline (2 anonymous scenarios added), so the deltas are not like-for-like.
 - Overall: routing 100% (+0pp), facts 77% (−5pp), answer 0.46 (+0.02), coverage 0.79 (−0.02), route 0.93 (+0.02, min 0.20 → 0.40).
-- Knowledge facts were 42% (−25pp). The drop is Get Clássica: scenario 01 passed 3/3 → 1/3 and the new anonymous 18 passed 1/3, both missing "4G" because the reply said no Clássica info was found. Corpus coverage is thin there (known limitation). Eval scenarios have empty history, so nothing here goes through the new history path. Scenario 04 (Pix key) passed 2/3; 09 (48 installments) went 0/3 → 1/3.
+- Knowledge facts were 42% (−25pp). The drop is Get Clássica: scenario 01 passed 3/3 → 1/3 and the new anonymous 18 passed 1/3, both missing "4G" because the reply said no Clássica info was found. Corpus coverage is thin there (known limitation). Eval scenarios have empty history, so nothing here goes through the new history path. Smaller drops: 04 (Pix key) 3/3 → 2/3, 05 (offline machine) facts 3/3 → 2/3. 09 (48 installments) went 0/3 → 1/3.
 - Support facts 93% (+5pp). The anonymous account scenario 19 passed 3/3 with answer 1.0.
 - Mixed questions 12/57 = 21%, incomplete 9/12 = 75% (−17pp). The verdict is still **build multi-intent Router**. The coverage Judge agreed with the labelled Mixed scenarios 12/12.
-- recall@4 12/14 = 86%, the same 2 misses. Tokens: 175,915 (−53 per run).
+- recall@4 12/14 = 86%, the same 2 misses. Tokens: 175,915 in total; the mean per scenario run is 3,086 (−53 vs 3,140).
 - No regression attributable to `conversations-identity`. The facts drop is retrieval/LLM variance on a weak Corpus topic.
 
 Next: `human-takeover` (B4).
