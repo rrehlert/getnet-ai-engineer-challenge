@@ -84,7 +84,7 @@ Every Agent sees the Conversation's last 10 Turns as `history` before the curren
   - `/chat` without `conversation_id` starts a new Conversation owned by the token's `sub` and returns its id (a random UUID); with it, the Message is appended to that Conversation. An unknown id and another Merchant's id are the same 404 (`conversation_not_found`), and the graph doesn't run.
   - After a successful graph run, the user Turn and the assistant Turn (reply, Intent, Sources) are stored together; a failed run stores nothing. Raw tool output and Evidence are never stored.
   - Tables: `conversations` (`id`, `owner`, `created_at`, `updated_at`, `mode` = `bot`, for the future human takeover, [ADR 0006](docs/adr/0006-human-takeover-via-conversation-mode.md)) and `turns` (monotonic `id`, `conversation_id`, `role` `user`/`assistant`/`operator`, `content`, `intent`, `sources`, `created_at`).
-  - Retention: at startup, Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted with their Turns; only the count is logged.
+  - Retention: at startup only (no periodic job, so a long-running process doesn't purge until it restarts), Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted with their Turns; only the count is logged.
   - `GET /conversations` → `{conversations: [{id, created_at, updated_at, mode}]}`: the caller's Conversations, most recently updated first.
   - `GET /conversations/{id}/turns?after=<turn id>` → `{conversation_id, turns: [{id, role, content, intent, sources, created_at}]}`: Turns oldest first; with `after`, only Turns with a larger id (to poll for new ones; default `0` = all, negative → 422). Another Merchant's id and an unknown id are the same 404 (`conversation_not_found`) as `/chat`.
   - Both need a Merchant token: no token → 401 (`unauthorized`), invalid token → 401 (`invalid_token`), operator token → 403 (`forbidden`; operator endpoints come with the human takeover). Timestamps are ISO 8601 UTC.
@@ -514,6 +514,7 @@ The README (`11`, `12`) and the video came after the timebox.
 
 ## Known limitations / future improvements
 
+- **Judges and history:** the Judges see only the current Message, not the Conversation history, so a short follow-up ("It's the Smart one") can get a falsely low route/answer score.
 - **Identity:** the Merchant comes from a verified JWT, but tokens are issued by a demo "log in as" endpoint, not a real identity provider; no refresh or revocation.
 - **Get Clássica:** the Corpus has little on it, so comparing it with Get Smart is weak.
 - **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it.
