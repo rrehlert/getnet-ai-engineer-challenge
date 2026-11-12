@@ -11,9 +11,25 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Queue and Review tabs
-- [ ] Detail with Turns, brief, account
-- [ ] Suggested reply prefilled; `used_suggestion` only when unchanged
-- [ ] Buttons follow Mode and claim; conflicts shown and refreshed
+- [x] Queue and Review tabs
+- [x] Detail with Turns, brief, account
+- [x] Suggested reply prefilled; `used_suggestion` only when unchanged
+- [x] Buttons follow Mode and claim; conflicts shown and refreshed
+
+## Comments
+
+- New `app/static/operator.js`, loaded by `index.html` after `app.js` (defer, same order). It uses `app.js`'s `el`, `api`, `sourcesNode` and registers itself with `ROLE_VIEWS.operator = operatorView` (inside an IIFE, no other globals except `OPERATOR_PANELS`). `app.js` is untouched: its placeholder `operatorView` is now dead code, left to avoid a conflict with ticket 02's edits nearby; delete it when merging.
+- Lists: tabs **Queue** (`/operator/queue`: priority badge, category, age, customer_ask; API order, oldest first) and **Review** (`/operator/review`: Mode, "updated … ago", id; API order, newest first). Both fetched every 5 s, counts in the tab labels. Selected Conversation highlighted.
+- Detail (`/operator/conversations/{id}`), built once per opened Conversation and updated in place: header (Mode badge, Review flag, Merchant, claim: "claimed by you"/other/unclaimed, id), action row, error line, Turns (Merchant left, Agent right, Assistant with Sources; author, time, Intent), Handoff Brief card (all brief fields, suggested reply highlighted, opened/claimed/outcome times; "Review only" note when `handoff` is null), account panel (generic over the fixture's shape: `profile` as a list, flat record lists as tables, nested ones such as Terminals as per-record lists, each section collapsible; "Account not found" when `account` is null). Sections are only rebuilt when their JSON changes, so polling doesn't reset scroll or collapse state.
+- Buttons: Claim (`waiting_human`); Close (`waiting_human`, or `human` claimed by me); Hand back + reply composer (`human` claimed by me); Mark reviewed (`needs_review`). "Claimed by me" = open Handoff's `claimed_by === claims.sub`. None valid → a short note.
+- Actions POST to `/claim`, `/reply`, `/handback`, `/close`, `/reviewed` and render the returned detail. Any error (409 `not_waiting`/`wrong_mode`/`not_flagged`, 403 `not_claimer`) shows the API's message in the error line and re-fetches the detail; lists re-fetched after every action. 404 on a poll (e.g. after Mark reviewed on a never-escalated Conversation) shows "no longer visible to Operators".
+- Reply: textarea prefilled with `suggested_reply` on open, and again only if the brief changes (e.g. rewritten on claim) while the Operator hasn't typed (`draft = {prefilled, touched}`; `input` sets `touched`). Never rebuilt by polling. `used_suggestion = text === brief.suggested_reply` (raw value, no trim; the raw value is what's sent). Hint under the box: "Suggested reply, unchanged" / "Edited". After a send the box stays empty (no refill).
+- Polling: detail every 2 s, lists every 5 s, skipped while `document.hidden`; `visibilitychange` back to visible refreshes at once. Stale responses (another Conversation opened meanwhile, view stopped) are dropped. Cleanup (logout/re-render) clears both timers, removes the listener, stops panels.
+- **Hook for ticket 04**: global `OPERATOR_PANELS` (top of `operator.js`). Push `{ create(conversationId) -> { node, update(detail), stop() } }`. `create` runs when a Conversation is opened, `node` is appended to the detail's slot `div.op-panels[data-slot="operator-panels"]` (below Turns/brief/account, full width, hidden while empty); `update(detail)` runs after every detail refresh (2 s cadence, paused while hidden, and after actions), so the events panel can fetch `/operator/conversations/{id}/events` there; `stop()` on switching Conversation or leaving the view. The panel file can live in its own script loaded after `operator.js`.
+- CSS: `/* Operator view */` section at the end of `style.css`, all classes `op-*`.
+- Tests (`tests/test_page.py`): `operator.js` served byte-identical; `index.html` loads it after `app.js`; no external origins in any static script; the HTML-sink check now runs over every `app/static/*.js` (parametrized). No backend change. `uv run pytest`: 412 passed. `node --check` on both scripts.
+- Verified in a real browser (headless Chrome via a local puppeteer, not part of the suite; scratch server = `create_app` with a seeded SQLite Store, an Escalator that raises, Judges off, no LLM): tabs and counts, queue order, Turns/brief rendered as text (`<img onerror>` and `<script>` payloads shown literally, no element created), account panel, buttons for `waiting_human`/`human`-mine/claimed-by-other/flagged-bot, prefill, typing survives 2 polls, edited reply → `used_suggestion: false`, unchanged → `true`, no refill after send, conflict (closed behind our back, then Hand back) → API message shown and detail refreshed to `closed`, Mark reviewed → later 404 note, polling paused while hidden and resumed on visible, logout stops polling, no page errors.
+- Not verified: the 403 `not_claimer` path in the browser (only one mock Operator; same code path as the 409 that was verified); a brief rewritten on claim refilling the box (the fake Escalator keeps the old brief); Hand back clicked successfully (the API action itself is covered in the human-takeover tests). Two-window live walkthrough with a Merchant belongs to 06.
+- Left out: the spec's `?after=<last turn id>` for Turns: the Operator detail endpoint has no `after`, so the whole detail is polled (small, and it carries Mode/claim/brief changes too). No backend change made for it.
