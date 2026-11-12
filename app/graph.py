@@ -23,6 +23,8 @@ from langgraph.graph import END, START, StateGraph
 
 Intent = Literal["knowledge", "support", "unsupported", "human"]
 Agent = Literal["router", "knowledge", "support", "escalator"]
+# Intents an anonymous visitor gets the login reply for (ADR 0005): account data and a person.
+LOGIN_INTENTS: tuple[Intent, ...] = ("support", "human")
 
 
 def agent_for(intent: Intent, anonymous: bool = False, escalated: bool = False) -> Agent:
@@ -31,7 +33,7 @@ def agent_for(intent: Intent, anonymous: bool = False, escalated: bool = False) 
     or `human` Message with the login reply."""
     if escalated:
         return "escalator"
-    if intent == "unsupported" or (anonymous and intent in ("support", "human")):
+    if intent == "unsupported" or (anonymous and intent in LOGIN_INTENTS):
         return "router"
     if intent == "human":
         return "escalator"
@@ -136,9 +138,14 @@ MERCHANT_ASKED = "The Merchant asked to talk to a person."
 ESCALATOR_STEP = "escalator"
 
 
+def specialist_reason(state: GraphState | dict) -> str:
+    """The `escalation_reason` a specialist set (in the state or its update), stripped; "" when none."""
+    return (state.get("escalation_reason") or "").strip()
+
+
 def escalation_reason(state: GraphState) -> str:
     """The specialist's reason, or the Merchant's own request for a person."""
-    return (state.get("escalation_reason") or "").strip() or MERCHANT_ASKED
+    return specialist_reason(state) or MERCHANT_ASKED
 
 
 def fallback_brief(state: GraphState) -> HandoffBrief:
@@ -165,7 +172,7 @@ def _next(state: GraphState) -> str:
     intent = state.get("intent")
     if intent is None:
         raise ValueError("the Router set no Intent")
-    if intent in ("support", "human") and state["user_id"] is None:
+    if intent in LOGIN_INTENTS and state["user_id"] is None:
         return LOGIN_STEP
     if intent == "human":
         return ESCALATOR_STEP
@@ -175,19 +182,23 @@ def _next(state: GraphState) -> str:
 def _after_specialist(state: GraphState) -> str:
     """A specialist that set an `escalation_reason` hands over to the Escalator; otherwise done.
     Anonymous visitors are never escalated (they have no Conversation to hand over)."""
-    if (state.get("escalation_reason") or "").strip() and state["user_id"] is not None:
+    if specialist_reason(state) and state["user_id"] is not None:
         return ESCALATOR_STEP
     return END
 
 
 def _never_empty(specialist: Node) -> Node:
     """A specialist that returned no answer text gets the fixed fallback instead
-    (unless it escalated: the Escalator writes the answer then)."""
+    (unless it escalated a Merchant's case: the Escalator writes the answer then).
+    An escalation without a Merchant is dropped: anonymous visitors are never escalated."""
 
     def node(state: GraphState) -> dict:
         update = specialist(state)
-        if not (update.get("escalation_reason") or "").strip() and not (update.get("answer") or "").strip():
-            update = {**update, "answer": EMPTY_ANSWER_FALLBACK}
+        escalates = bool(specialist_reason(update)) and state["user_id"] is not None
+        if not escalates:
+            update = {k: v for k, v in update.items() if k != "escalation_reason"}
+            if not (update.get("answer") or "").strip():
+                update["answer"] = EMPTY_ANSWER_FALLBACK
         return update
 
     return node

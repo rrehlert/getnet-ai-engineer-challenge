@@ -21,7 +21,7 @@ def run_summary(agent: str, messages: Sequence[BaseMessage]) -> dict:
     """`steps`: the agent, then each tool it called; `tokens`: total over its model calls;
     `evidence`: each tool output it saw, in order (calls refused by a tool limit excluded).
     A run that ended on `escalate_to_human` lists that tool last in `steps`."""
-    escalated = [ESCALATE_TOOL] if escalation(messages) else []
+    escalated = [ESCALATE_TOOL] if escalation_update(messages) else []
     return {
         "evidence": [
             {"tool": m.name, "content": m.text}
@@ -61,17 +61,17 @@ ESCALATION_RULE = """Escalate with escalate_to_human(reason) instead of answerin
 - your tools or data don't cover the case (e.g. chargeback disputes, contract or registration
   changes, refunds, blocked accounts);
 - the case needs a human decision (exceptions, complaints, anything you may not promise).
-The reason is a short note for the human agent, in English: what the Merchant needs and why
+The reason is a short note for the Operator (the Getnet staff member who takes over), in English: what the Merchant needs and why
 you can't resolve it. Don't escalate a question you can answer, and never tell the Merchant
 you can't help when escalating would."""
 
 
 @tool(ESCALATE_TOOL)
 def escalate_to_human(reason: str) -> str:
-    """Hand the case to a human agent (Operator) when you can't resolve it. `reason`: what the
+    """Hand the case to an Operator (a Getnet staff member) when you can't resolve it. `reason`: what the
     Merchant needs and why you can't resolve it. The Merchant is told they're being transferred."""
     # Never executed: `stop_on_escalation` ends the run as soon as the model calls it.
-    return "Escalated to a human agent."
+    return "Escalated to an Operator."
 
 
 @after_model(tools=[escalate_to_human], can_jump_to=["end"])
@@ -84,7 +84,7 @@ def stop_on_escalation(state: AgentState, runtime: Any) -> dict | None:
     return None
 
 
-def escalation(messages: Sequence[BaseMessage]) -> dict:
+def escalation_update(messages: Sequence[BaseMessage]) -> dict:
     """The run's `escalation_reason` (and the step) if it ended on `escalate_to_human`; else `{}`.
     Put last in the node's update: the draft answer is dropped and the reason is never a Source."""
     last = messages[-1] if messages else None

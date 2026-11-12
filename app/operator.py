@@ -14,15 +14,23 @@ import logging
 import uuid
 from collections.abc import Callable
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.auth import Principal
 from app.errors import AuthError, error_response
-from app.graph import HISTORY_TURNS, GraphState, Node, Priority, Source, fallback_brief
-from app.store import ActionResult, Conversation, Mode, NewTurn, Role, Store
+from app.graph import HandoffBrief, Node, Priority, Source, fallback_brief
+from app.store import (
+    ActionResult,
+    Conversation,
+    HandoffOutcome,
+    Mode,
+    NewTurn,
+    Role,
+    Store,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,11 +48,11 @@ class Queue(BaseModel):
 
 
 class HandoffOut(BaseModel):
-    brief: dict  # the Handoff Brief
+    brief: HandoffBrief
     created_at: datetime
     claimed_by: str | None
     claimed_at: datetime | None
-    outcome: Literal["handed_back", "closed"] | None
+    outcome: HandoffOutcome | None
     ended_at: datetime | None
 
 
@@ -64,7 +72,7 @@ class ConversationDetail(BaseModel):
     needs_review: bool
     created_at: datetime
     updated_at: datetime
-    handoff: HandoffOut | None  # the current (latest) Handoff; None for a flagged Conversation never escalated
+    handoff: HandoffOut | None  # `Store.current_handoff`; None for a flagged Conversation never escalated
     account: dict | None  # the Merchant's fixture account; None when there is none
     turns: list[OperatorTurn]
 
@@ -126,9 +134,9 @@ def operator_router(
             QueueItem(
                 conversation_id=h.conversation_id,
                 created_at=h.created_at,
-                category=h.brief.get("category", ""),
-                priority=h.brief.get("priority", "normal"),
-                customer_ask=h.brief.get("customer_ask", ""),
+                category=h.brief["category"],
+                priority=h.brief["priority"],
+                customer_ask=h.brief["customer_ask"],
             )
             for h in store().queue()
         ])
@@ -137,8 +145,7 @@ def operator_router(
         # Lazily, like `/me`: keeps the agent stack out of app import.
         from app.support import load_merchants
 
-        handoffs = store().handoffs(conversation.id)
-        current = handoffs[-1] if handoffs else None
+        current = store().current_handoff(conversation.id)
         return ConversationDetail(
             conversation_id=conversation.id,
             merchant=conversation.owner,
@@ -187,24 +194,15 @@ def operator_router(
     def refresh_brief(conversation_id: str) -> None:
         """If the Merchant wrote after the brief, the Escalator Agent rewrites it. A failed or
         unusable rewrite keeps the old brief (logged without content); the claim stands either way."""
-        handoffs = store().handoffs(conversation_id)
-        handoff = handoffs[-1] if handoffs and handoffs[-1].ended_at is None else None
+        from app.escalator import rewrite_state  # lazily, like `load_merchants`
+
+        handoff = store().current_handoff(conversation_id)
         turns = store().turns(conversation_id)
-        if handoff is None or not turns or turns[-1].id <= (handoff.brief_turn_id or 0):
+        # Only the open Handoff's brief is rewritten (just claimed, so it is open unless closed meanwhile).
+        if handoff is None or handoff.ended_at is not None or not turns or turns[-1].id <= (handoff.brief_turn_id or 0):
             return
         latest = turns[-1]
-        state: GraphState = {
-            "message": latest.content,
-            "user_id": store().operator_conversation(conversation_id).owner,
-            "history": [{"role": t.role, "content": t.content} for t in turns[:-1][-HISTORY_TURNS:]],
-            # The escalated Turn's Intent; Turns sent while waiting have none.
-            "intent": next((t.intent for t in reversed(turns) if t.intent), "human"),
-            "escalation_reason": handoff.brief.get("reason", ""),
-            "evidence": [],  # Evidence isn't stored; the brief being rewritten already used it
-            "sources": [],
-            "steps": [],
-            "tokens": 0,
-        }
+        state = rewrite_state(store().operator_conversation(conversation_id).owner, turns, handoff.brief)
         try:
             brief = escalator()(state).get("handoff")
         except Exception as exc:  # noqa: BLE001 - any failure keeps the old brief; no traceback (it may quote content)
@@ -214,7 +212,7 @@ def operator_router(
         if not brief or brief == fallback_brief(state):
             log.warning("brief rewrite unusable on claim conversation_id=%s; keeping the old brief", conversation_id)
             return
-        store().replace_brief(handoff.id, dict(brief), latest.id)
+        store().replace_brief(handoff.id, brief, latest.id)
 
     # --- Review flag (low `answer` Judge Scores): read after the fact, never a Mode change ---
 
@@ -237,7 +235,7 @@ def operator_router(
             return error_response(409, "not_flagged", "This Conversation has no Review flag.", uuid.uuid4().hex)
         return view(dataclasses.replace(conversation, needs_review=False))
 
-    # --- Reply, handback, close (ticket 04) ---
+    # --- Reply, handback, close: the claiming Operator's actions ---
 
     def act(conversation_id: str, action: Callable[[], ActionResult]):
         """Run an Operator action on a visible Conversation; 403 when another Operator holds

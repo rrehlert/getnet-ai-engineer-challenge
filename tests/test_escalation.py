@@ -7,7 +7,7 @@ from contextlib import closing
 import pytest
 
 from app.graph import build_graph
-from app.store import NewTurn, Store
+from app.store import ModeChanged, NewTurn, Store
 from tests.test_chat_mode import NeverInvokedGraph
 from tests.test_conversations import chat, client_with
 from tests.test_graph import fake_route, fake_specialist
@@ -114,7 +114,7 @@ def test_agent_for_names_the_escalator_for_an_escalated_turn():
 
 
 class FakeStructuredModel:
-    """Stands in for `with_structured_output(Escalation, include_raw=True, method="function_calling")`."""
+    """Stands in for `with_structured_output(EscalatorOutput, include_raw=True, method="function_calling")`."""
 
     def __init__(self, parsed=None, parsing_error=None, tokens=0):
         from langchain_core.messages import AIMessage
@@ -126,9 +126,9 @@ class FakeStructuredModel:
     def with_structured_output(self, schema, include_raw=False, method=None):
         from langchain_core.runnables import RunnableLambda
 
-        from app.escalator import Escalation
+        from app.escalator import EscalatorOutput
 
-        assert schema is Escalation and include_raw is True and method == "function_calling"
+        assert schema is EscalatorOutput and include_raw is True and method == "function_calling"
 
         def respond(messages):
             self.seen = messages
@@ -152,16 +152,16 @@ ESCALATION_STATE = {
 }
 
 
-def escalation(**overrides):
-    from app.escalator import Escalation
+def escalator_output(**overrides):
+    from app.escalator import EscalatorOutput
 
-    return Escalation(**{**BRIEF, "transfer_message": TRANSFER, **overrides})
+    return EscalatorOutput(**{**BRIEF, "transfer_message": TRANSFER, **overrides})
 
 
 def test_escalator_returns_the_transfer_message_as_answer_and_the_brief_as_handoff():
     from app.escalator import make_escalator
 
-    update = make_escalator(FakeStructuredModel(escalation(), tokens=11))(ESCALATION_STATE)
+    update = make_escalator(FakeStructuredModel(escalator_output(), tokens=11))(ESCALATION_STATE)
 
     assert update["answer"] == TRANSFER
     assert update["handoff"] == BRIEF
@@ -171,7 +171,7 @@ def test_escalator_returns_the_transfer_message_as_answer_and_the_brief_as_hando
 def test_escalator_sees_history_reason_intent_evidence_and_sources():
     from app.escalator import make_escalator
 
-    model = FakeStructuredModel(escalation())
+    model = FakeStructuredModel(escalator_output())
     make_escalator(model)({**ESCALATION_STATE, "intent": "support", "escalation_reason": "chargeback needs a human"})
 
     text = "\n".join(str(m.content) for m in model.seen)
@@ -186,7 +186,7 @@ def test_escalator_reason_defaults_to_the_merchant_asking_for_a_person():
     from app.escalator import make_escalator
     from app.graph import MERCHANT_ASKED
 
-    model = FakeStructuredModel(escalation())
+    model = FakeStructuredModel(escalator_output())
     make_escalator(model)(ESCALATION_STATE)
 
     assert MERCHANT_ASKED in "\n".join(str(m.content) for m in model.seen)
@@ -196,7 +196,7 @@ def test_missing_transfer_message_gets_the_fixed_bilingual_fallback_and_keeps_th
     from app.escalator import make_escalator
     from app.graph import TRANSFER_FALLBACK
 
-    update = make_escalator(FakeStructuredModel(escalation(transfer_message="  ")))(ESCALATION_STATE)
+    update = make_escalator(FakeStructuredModel(escalator_output(transfer_message="  ")))(ESCALATION_STATE)
 
     assert update["answer"] == TRANSFER_FALLBACK
     assert update["handoff"] == BRIEF
@@ -264,7 +264,10 @@ def test_at_most_one_open_handoff_per_conversation(store):
     cid = store.create_conversation("cliente1988")
     store.escalate(cid, "cliente1988", [NewTurn("user", "pessoa")], BRIEF)
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(ModeChanged):  # only from `bot`
+        store.escalate(cid, "cliente1988", [NewTurn("user", "pessoa de novo")], BRIEF)
+    store.set_mode(cid, "bot")
+    with pytest.raises(sqlite3.IntegrityError):  # the unique index is the backstop
         store.escalate(cid, "cliente1988", [NewTurn("user", "pessoa de novo")], BRIEF)
 
     assert len(store.handoffs(cid)) == 1

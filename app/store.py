@@ -14,9 +14,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+from app.graph import HandoffBrief
+
 Role = Literal["user", "assistant", "operator"]
 # Human takeover (ADR 0006): only `bot` runs the graph.
 Mode = Literal["bot", "waiting_human", "human", "closed"]
+# How a Handoff ended: the Operator handed back to the bot, or closed the Conversation.
+HandoffOutcome = Literal["handed_back", "closed"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -101,13 +105,22 @@ class Handoff:
 
     id: int
     conversation_id: str
-    brief: dict  # the Handoff Brief; stored, never logged
+    brief: HandoffBrief  # stored, never logged
     created_at: datetime
     claimed_by: str | None
     claimed_at: datetime | None
-    outcome: Literal["handed_back", "closed"] | None
+    outcome: HandoffOutcome | None
     ended_at: datetime | None
     brief_turn_id: int | None = None  # the last Turn the brief was written from
+
+
+class ModeChanged(Exception):
+    """A conditional write refused: the Conversation is no longer in a Mode the caller read
+    (another request escalated it, or an Operator acted). `mode` is its Mode now (None: gone)."""
+
+    def __init__(self, mode: Mode | None):
+        super().__init__(f"conversation is now in mode {mode!r}")
+        self.mode = mode
 
 
 AuditAction = Literal["claim", "reply", "handback", "close", "reviewed"]
@@ -256,10 +269,28 @@ class Store:
             ).fetchall()
         return [_conversation(r) for r in rows]
 
-    def append_turns(self, conversation_id: str, turns: Sequence[NewTurn]) -> None:
-        """Append `turns` in order, in one transaction, and bump the Conversation's `updated_at`."""
+    def append_turns(
+        self, conversation_id: str, turns: Sequence[NewTurn], while_in: Sequence[Mode] | None = None,
+    ) -> None:
+        """Append `turns` in order, in one transaction, and bump the Conversation's `updated_at`.
+        With `while_in`, only if the Mode is one of them; else `ModeChanged` and nothing is stored."""
         with self._connect() as conn:
-            self._append(conn, conversation_id, turns, self._now())
+            now = self._now()
+            if while_in is not None:
+                self._require_mode(conn, conversation_id, while_in, now)
+            self._append(conn, conversation_id, turns, now)
+
+    @staticmethod
+    def _require_mode(conn: sqlite3.Connection, conversation_id: str, modes: Sequence[Mode], now: str) -> None:
+        """One conditional update decides, inside the caller's transaction, so a racing Mode
+        change can't slip in between the check and the writes; raises `ModeChanged` (rolls back)."""
+        marks = ", ".join("?" for _ in modes)
+        if conn.execute(
+            f"UPDATE conversations SET updated_at = ? WHERE id = ? AND mode IN ({marks})",
+            (now, conversation_id, *modes),
+        ).rowcount != 1:
+            row = conn.execute("SELECT mode FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+            raise ModeChanged(None if row is None else row["mode"])
 
     @staticmethod
     def _append(conn: sqlite3.Connection, conversation_id: str, turns: Sequence[NewTurn], now: str) -> None:
@@ -273,16 +304,20 @@ class Store:
         )
         conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
 
-    def escalate(self, conversation_id: str | None, owner: str, turns: Sequence[NewTurn], brief: dict) -> str:
+    def escalate(self, conversation_id: str | None, owner: str, turns: Sequence[NewTurn], brief: HandoffBrief) -> str:
         """An Escalation in one transaction: create the Conversation if `conversation_id` is None,
         append `turns`, open a Handoff with `brief` and set Mode `waiting_human`; returns the id.
 
-        A second open Handoff raises `sqlite3.IntegrityError` and nothing is stored.
-        Callers check ownership first (as for `append_turns`).
+        Only from `bot`: in any other Mode (e.g. a racing Escalation got there first) it raises
+        `ModeChanged` and nothing is stored. Callers check ownership first (as for `append_turns`).
         """
         now = self._now()
         with self._connect() as conn:
-            cid = conversation_id if conversation_id is not None else self._create(conn, owner, now)
+            if conversation_id is None:
+                cid = self._create(conn, owner, now)
+            else:
+                cid = conversation_id
+                self._require_mode(conn, cid, ("bot",), now)
             self._append(conn, cid, turns, now)
             conn.execute(
                 "INSERT INTO handoffs (conversation_id, brief, brief_turn_id, created_at)"
@@ -299,6 +334,16 @@ class Store:
                 "SELECT * FROM handoffs WHERE conversation_id = ? ORDER BY id", (conversation_id,)
             ).fetchall()
         return [_handoff(r) for r in rows]
+
+    def current_handoff(self, conversation_id: str) -> Handoff | None:
+        """The Conversation's current Handoff: its latest one. While the Mode is `waiting_human`
+        or `human` that is the open one; after handback or close, the one that just ended (kept
+        on view for context). None if never escalated. No owner check: callers check first."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM handoffs WHERE conversation_id = ? ORDER BY id DESC LIMIT 1", (conversation_id,)
+            ).fetchone()
+        return None if row is None else _handoff(row)
 
     def claim(self, conversation_id: str, operator: str) -> bool:
         """`waiting_human` → `human` for `operator`, in one transaction: one conditional update
@@ -357,7 +402,7 @@ class Store:
                          f"(mode = 'waiting_human' OR (mode = 'human' AND {self._CLAIMED_BY}))", (operator,))
 
     def _end(
-        self, conversation_id: str, operator: str, mode: Mode, outcome: Literal["handed_back", "closed"],
+        self, conversation_id: str, operator: str, mode: Mode, outcome: HandoffOutcome,
         turn: NewTurn, allowed: str, allowed_params: tuple,
     ) -> ActionResult:
         now = self._now()
@@ -375,7 +420,7 @@ class Store:
             self._audit(conn, operator, "handback" if outcome == "handed_back" else "close", conversation_id, now)
         return "done"
 
-    def replace_brief(self, handoff_id: int, brief: dict, brief_turn_id: int) -> None:
+    def replace_brief(self, handoff_id: int, brief: HandoffBrief, brief_turn_id: int) -> None:
         """A rewritten Handoff Brief, written from the Turns up to `brief_turn_id`."""
         with self._connect() as conn:
             conn.execute(

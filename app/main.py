@@ -19,7 +19,7 @@ from app.judge import FLAG_BELOW, run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy, log_request, setup_logging
 from app.operator import operator_router
-from app.store import Mode, NewTurn, Role, Store
+from app.store import Mode, ModeChanged, NewTurn, Role, Store
 
 log = logging.getLogger(__name__)
 
@@ -344,6 +344,17 @@ def create_app(
                 conversation_id=conversation_id,
             )
 
+        def mode_changed(exc: ModeChanged) -> JSONResponse:
+            """A racing request changed the Mode after it was read: 409, nothing stored (ADR 0006)."""
+            if exc.mode == "closed":
+                log_outcome("conversation_closed")
+                return _error(409, "conversation_closed", "This Conversation is closed; start a new one.", trace_id)
+            log_outcome("mode_changed")
+            return _error(
+                409, "mode_changed", "The Conversation's Mode changed while this Message was handled; send it again.",
+                trace_id,
+            )
+
         if not ready():
             log_outcome("starting")
             return _error(503, "starting", "The service is starting; try again shortly.", trace_id)
@@ -358,7 +369,11 @@ def create_app(
             return _error(409, "conversation_closed", "This Conversation is closed; start a new one.", trace_id)
         if conversation is not None and conversation.mode in ("waiting_human", "human"):
             # Taken over (ADR 0006): kept for the Operator; no Agent answers, no Judges.
-            get_store().append_turns(conversation.id, [NewTurn("user", request.message)])
+            try:
+                get_store().append_turns(conversation.id, [NewTurn("user", request.message)],
+                                         while_in=("waiting_human", "human"))
+            except ModeChanged as exc:
+                return mode_changed(exc)
             log_outcome("queued")
             return ChatResponse(
                 answer="", mode=conversation.mode, intent=None, agent=None, sources=[], steps=[],
@@ -395,13 +410,19 @@ def create_app(
                 NewTurn("user", request.message, intent=intent),
                 NewTurn("assistant", result.get("answer", ""), intent=intent, sources=result.get("sources", [])),
             ]
-            if brief is not None:
-                # One transaction: Turns, the open Handoff (the brief is stored, never logged), Mode waiting_human.
-                conversation_id = get_store().escalate(conversation_id, user_id, turns, dict(brief))
-            else:
-                if conversation_id is None:
+            # Each write is conditional on the `bot` Mode read above: a racing Escalation or
+            # Operator action since then means 409 and nothing stored.
+            try:
+                if brief is not None:
+                    # One transaction: Turns, the open Handoff (the brief is stored, never logged), Mode waiting_human.
+                    conversation_id = get_store().escalate(conversation_id, user_id, turns, brief)
+                elif conversation_id is None:
                     conversation_id = get_store().create_conversation(user_id)
-                get_store().append_turns(conversation_id, turns)
+                    get_store().append_turns(conversation_id, turns)
+                else:
+                    get_store().append_turns(conversation_id, turns, while_in=("bot",))
+            except ModeChanged as exc:
+                return mode_changed(exc)
         log_outcome("ok", result)
         if judges_on():
             background.add_task(

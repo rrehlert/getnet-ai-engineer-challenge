@@ -111,3 +111,76 @@ def test_another_merchants_taken_over_or_closed_conversation_is_still_404(store,
 
     assert response.status_code == 404
     assert len(store.turns(theirs)) == 2
+
+
+# --- Races: the Mode can change between `/chat` reading it and storing the Turns ---
+
+
+class ModeChangingGraph:
+    """While the graph runs, another request moves the Conversation to `mode`."""
+
+    def __init__(self, store, cid, mode, handoff=None):
+        self.store, self.cid, self.mode, self.handoff = store, cid, mode, handoff
+
+    def invoke(self, state):
+        self.store.set_mode(self.cid, self.mode)
+        result = {**state, "intent": "support", "answer": "bot answer", "steps": ["router", "support"]}
+        if self.handoff is not None:
+            result["handoff"] = self.handoff
+        return result
+
+
+@pytest.mark.parametrize(("mode", "code"), [
+    ("waiting_human", "mode_changed"), ("human", "mode_changed"), ("closed", "conversation_closed"),
+])
+def test_bot_answer_is_not_stored_when_the_mode_left_bot_while_the_graph_ran(store, mode, code):
+    cid = conversation_in(store, "bot")
+
+    response = chat(client_with(store, ModeChangingGraph(store, cid, mode)), "e agora?", conversation_id=cid)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == code
+    assert len(store.turns(cid)) == 2
+    assert store.conversation(cid, "cliente1988").mode == mode
+
+
+def test_a_second_escalation_racing_the_first_is_409_and_opens_no_second_handoff(store):
+    from tests.test_escalation import BRIEF
+
+    cid = conversation_in(store, "bot")
+    first = chat(client_with(store, ModeChangingGraph(store, cid, "bot", handoff=BRIEF)), "atendente", conversation_id=cid)
+    assert first.status_code == 200 and first.json()["mode"] == "waiting_human"
+    store.set_mode(cid, "bot")  # as if the second request read `bot` before the first escalation committed
+
+    second = chat(client_with(store, ModeChangingGraph(store, cid, "waiting_human", handoff=BRIEF)), "atendente!",
+                  conversation_id=cid)
+
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "mode_changed"
+    assert len(store.handoffs(cid)) == 1
+    assert len(store.turns(cid)) == 4
+
+
+class ModeChangesAfterRead(Store):
+    """The Mode `/chat` reads goes stale at once: an Operator acts right after the read."""
+
+    then = None
+
+    def conversation(self, conversation_id, owner):
+        found = super().conversation(conversation_id, owner)
+        if found is not None and self.then is not None:
+            self.set_mode(conversation_id, self.then)
+        return found
+
+
+@pytest.mark.parametrize(("then", "code"), [("closed", "conversation_closed"), ("bot", "mode_changed")])
+def test_queued_message_is_not_stored_when_the_mode_changed_after_it_was_read(tmp_path, then, code):
+    store = ModeChangesAfterRead(tmp_path / "conversations.db")
+    cid = conversation_in(store, "waiting_human")
+    store.then = then
+
+    response = chat(client_with(store, NeverInvokedGraph()), "ainda aí?", conversation_id=cid)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == code
+    assert len(store.turns(cid)) == 2

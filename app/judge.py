@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field, model_validator
 
-from app.graph import Evidence, Intent
+from app.graph import LOGIN_INTENTS, Evidence, Intent
 from app.observability import LogPrivacy, emit
 from app.router import INTENT_POLICY
 
@@ -85,8 +85,6 @@ ESCALATION_RUBRIC = (
     "Agents did not take. The reply is the transfer message to the Merchant and must be in the Message's language."
 )
 
-# Intents for which an anonymous visitor gets the fixed login reply (account data, or a person).
-LOGIN_INTENTS = ("support", "human")
 ANONYMOUS_SUPPORT_RUBRIC = (
     "The visitor is not logged in, so the reply must give no account data and ask them to log in "
     "to see their account or talk to an agent, offering help with Getnet products meanwhile."

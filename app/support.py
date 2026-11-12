@@ -24,7 +24,7 @@ from app.agents import (
     ESCALATION_RULE,
     LANGUAGE_RULE,
     conversation_messages,
-    escalation,
+    escalation_update,
     run_summary,
     stop_on_escalation,
 )
@@ -182,10 +182,10 @@ def make_support(model: BaseChatModel, today: Callable[[], date] = date.today) -
         out = runner.invoke({"messages": conversation_messages(state)}, context=ctx)
         messages = out["messages"]
         answer = messages[-1].text
-        escalated = escalation(messages)
-        if not known and not escalated and not answer.strip():
+        escalation_fields = escalation_update(messages)
+        if not known and not escalation_fields and not answer.strip():
             # The model tried an unavailable tool anyway; reply deterministically.
             answer = NOT_FOUND.format(user_id=ctx.user_id)
-        return {"answer": answer, "sources": [], **run_summary("support", messages), **escalated}
+        return {"answer": answer, "sources": [], **run_summary("support", messages), **escalation_fields}
 
     return support
