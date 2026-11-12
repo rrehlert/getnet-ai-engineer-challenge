@@ -97,3 +97,32 @@ def test_database_uses_wal_mode(tmp_path):
 
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_conversations_lists_only_the_owners_newest_first_by_updated_at(tmp_path):
+    clock = Clock()
+    store = Store(tmp_path / "db.sqlite", clock=clock)
+    older = store.create_conversation("cliente1988")
+    clock.now = T0 + timedelta(minutes=1)
+    newer = store.create_conversation("cliente1988")
+    store.create_conversation("cliente2024")
+    clock.now = T0 + timedelta(minutes=2)
+    store.append_turns(older, [NewTurn("user", "back to the first one")])
+
+    listed = store.conversations("cliente1988")
+
+    assert [c.id for c in listed] == [older, newer]
+    assert listed[0].updated_at == T0 + timedelta(minutes=2) and listed[0].mode == "bot"
+    assert {c.owner for c in listed} == {"cliente1988"}
+    assert store.conversations("nobody") == []
+
+
+def test_turns_after_a_turn_id_returns_only_later_turns(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    cid = store.create_conversation("cliente1988")
+    store.append_turns(cid, [NewTurn("user", "a"), NewTurn("assistant", "b"), NewTurn("user", "c")])
+    first, second, third = store.turns(cid)
+
+    assert [t.content for t in store.turns(cid, after=first.id)] == ["b", "c"]
+    assert store.turns(cid, after=third.id) == []
+    assert store.turns(cid, after=0) == [first, second, third]

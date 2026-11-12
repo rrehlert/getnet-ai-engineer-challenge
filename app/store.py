@@ -137,11 +137,11 @@ class Store:
             )
             conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
 
-    def turns(self, conversation_id: str) -> list[Turn]:
-        """All Turns of the Conversation, oldest first. No owner check: callers check first."""
+    def turns(self, conversation_id: str, after: int = 0) -> list[Turn]:
+        """Turns of the Conversation with id > `after` (default: all), oldest first. No owner check: callers check first."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM turns WHERE conversation_id = ? ORDER BY id", (conversation_id,)
+                "SELECT * FROM turns WHERE conversation_id = ? AND id > ? ORDER BY id", (conversation_id, after)
             ).fetchall()
         return [
             Turn(
@@ -152,6 +152,23 @@ class Store:
                 intent=r["intent"],
                 sources=json.loads(r["sources"]),
                 created_at=datetime.fromisoformat(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    def conversations(self, owner: str) -> list[Conversation]:
+        """`owner`'s Conversations, most recently updated first (ties: newest created first)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM conversations WHERE owner = ? ORDER BY updated_at DESC, rowid DESC", (owner,)
+            ).fetchall()
+        return [
+            Conversation(
+                id=r["id"],
+                owner=r["owner"],
+                created_at=datetime.fromisoformat(r["created_at"]),
+                updated_at=datetime.fromisoformat(r["updated_at"]),
+                mode=r["mode"],
             )
             for r in rows
         ]
