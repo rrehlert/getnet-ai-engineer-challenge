@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -155,3 +155,13 @@ class Store:
             )
             for r in rows
         ]
+
+    def purge(self, retention: timedelta) -> int:
+        """Delete Conversations not updated within `retention` of now, with their Turns; returns how many."""
+        cutoff = (self.clock() - retention).astimezone(UTC).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM turns WHERE conversation_id IN (SELECT id FROM conversations WHERE updated_at < ?)",
+                (cutoff,),
+            )
+            return conn.execute("DELETE FROM conversations WHERE updated_at < ?", (cutoff,)).rowcount

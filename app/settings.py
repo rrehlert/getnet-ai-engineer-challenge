@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import PositiveInt
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,8 @@ class Settings(BaseSettings):
     # All persistent state (gitignored): the Corpus index (`chroma/`, built at startup, not baked
     # into the image) and the Conversations database (`conversations.db`). One volume in compose.
     state_dir: str = "state"
+    # Conversations not updated within this many days are deleted, with their Turns, at startup.
+    conversation_retention_days: PositiveInt = 30
     # HMAC key for `user_ref` in logs; empty means a random key per process (refs don't match across restarts).
     log_hash_key: str = ""
     log_messages: MessageMode = "redacted"

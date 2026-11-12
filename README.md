@@ -73,6 +73,7 @@ POST /chat {message, conversation_id?} + Authorization: Bearer <token>   (Mercha
   - `/chat` without `conversation_id` starts a new Conversation owned by the token's `sub` and returns its id (a random UUID); with it, the Message is appended to that Conversation. An unknown id and another Merchant's id are the same 404 (`conversation_not_found`), and the graph doesn't run.
   - After a successful graph run, the user Turn and the assistant Turn (reply, Intent, Sources) are stored together; a failed run stores nothing. Raw tool output and Evidence are never stored.
   - Tables: `conversations` (`id`, `owner`, `created_at`, `updated_at`, `mode` = `bot`, for the future human takeover, [ADR 0006](docs/adr/0006-human-takeover-via-conversation-mode.md)) and `turns` (monotonic `id`, `conversation_id`, `role` `user`/`assistant`/`operator`, `content`, `intent`, `sources`, `created_at`).
+  - Retention: at startup, Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted with their Turns; only the count is logged.
   - History is not yet passed to the Agents: that and listing Conversations are the next tickets of [`.scratch/conversations-identity/`](.scratch/conversations-identity/).
 - **Orchestration.** A LangGraph `StateGraph` (`app/graph.py`) with conditional edges on `state["intent"]`. `build_graph(route_fn, knowledge, support)` takes each agent as a plain callable, so tests inject fakes.
 - **Router Agent** (`app/router.py`). One `with_structured_output(Route, method="function_calling", include_raw=True)` call.
@@ -170,6 +171,8 @@ Merchants type personal data into Messages, so no log line writes it in clear te
 
   Even under `full`, other fields and non-event lines are still redacted.
 
+- **Retention.** Stored Conversations are not kept forever: at every startup, Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted together with their Turns. The startup log line gives only how many were deleted and the window, no ids or owners.
+
 Tool outputs (account data) are never logged. The mock fixture itself holds mock personal data, which is out of scope.
 
 ## Evaluation and observability strategy
@@ -227,6 +230,7 @@ All configuration is in env vars (see [`.env.example`](.env.example)). Never com
 | `RELEVANCE_THRESHOLD` | `0.5` | minimum cosine similarity for a Chunk to count as a Source |
 | `PORT` | `8000` | |
 | `STATE_DIR` | `state` | all persistent state: the Corpus index (`chroma/`) and the Conversations database (`conversations.db`); in compose, the named volume `state` at `/app/state` |
+| `CONVERSATION_RETENTION_DAYS` | `30` | Conversations not updated within this many days are deleted, with their Turns, at startup; see [Privacy](#privacy) |
 | `LOG_HASH_KEY` | empty | key for the `user_ref` HMAC in logs; empty means a random key per process, with a warning (refs change on restart) |
 | `JWT_SECRET` | empty | HS256 key for login tokens; empty means a random secret per process, with a warning (tokens stop working on restart) |
 | `DEMO_LOGIN` | `false` (`true` in compose) | enables `POST /dev/login` ("log in as" any user id); never enable it in a real deployment |
@@ -382,7 +386,7 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 248 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 253 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
@@ -393,7 +397,7 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
 - **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, invalid/expired token → 401 (never anonymous), operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
 - **Anonymous visitors:** no token with a fake Router: `support` gets the login reply and the Customer Support node is never called, `knowledge`/`unsupported` as today, `conversation_id` → 401, `{}` → 422, `user_ref` `anonymous`; the Router prompt (scripted fake model) and the Judges are told the visitor is not logged in.
-- **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, WAL, reopen the same file after close), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
+- **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, WAL, reopen the same file after close, retention purge with an injected clock incl. the window edge), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`; the purge runs at app startup (default 30 days, `CONVERSATION_RETENTION_DAYS`) and logs only a count. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
 - **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.

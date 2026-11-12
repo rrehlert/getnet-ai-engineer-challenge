@@ -4,6 +4,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
@@ -126,7 +127,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         get_log_privacy()
         get_auth()
-        get_store()
+        purge_stale_conversations(get_store())
         if judge_model is None and judges_on():
             from app.settings import get_settings, warn_if_judge_not_independent
 
@@ -151,6 +152,14 @@ def create_app(
 
             app.state.store = Store(get_settings().database_path)
         return app.state.store
+
+    def purge_stale_conversations(store: Store) -> None:
+        """Retention: drop Conversations idle for `CONVERSATION_RETENTION_DAYS`; logs only the count."""
+        from app.settings import get_settings
+
+        days = get_settings().conversation_retention_days
+        purged = store.purge(timedelta(days=days))
+        log.info("retention purge: deleted %d conversation(s) not updated in %d days", purged, days)
 
     def get_auth() -> AuthSettings:
         if app.state.auth is None:

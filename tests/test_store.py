@@ -97,3 +97,38 @@ def test_database_uses_wal_mode(tmp_path):
 
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_purge_deletes_stale_conversations_with_their_turns_and_keeps_fresh_ones(tmp_path):
+    clock = Clock()
+    path = tmp_path / "db.sqlite"
+    store = Store(path, clock=clock)
+    stale = store.create_conversation("cliente1988")
+    store.append_turns(stale, [NewTurn("user", "velha"), NewTurn("assistant", "ok")])
+    clock.now = T0 + timedelta(days=20)
+    fresh = store.create_conversation("cliente1988")
+    store.append_turns(fresh, [NewTurn("user", "nova")])
+    clock.now = T0 + timedelta(days=31)
+
+    assert store.purge(timedelta(days=30)) == 1
+
+    assert store.conversation(stale, "cliente1988") is None
+    assert store.conversation(fresh, "cliente1988") is not None
+    assert [t.content for t in store.turns(fresh)] == ["nova"]
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT count(*) FROM turns WHERE conversation_id = ?", (stale,)).fetchone()[0] == 0
+
+
+def test_purge_keeps_a_conversation_updated_exactly_at_the_window_edge(tmp_path):
+    clock = Clock()
+    store = Store(tmp_path / "db.sqlite", clock=clock)
+    edge = store.create_conversation("cliente1988")
+    clock.now = T0 - timedelta(microseconds=1)
+    past_edge = store.create_conversation("cliente1988")
+    clock.now = T0 + timedelta(days=30)
+
+    assert store.purge(timedelta(days=30)) == 1
+
+    assert store.conversation(edge, "cliente1988") is not None
+    assert store.conversation(past_edge, "cliente1988") is None
+    assert store.purge(timedelta(days=30)) == 0
