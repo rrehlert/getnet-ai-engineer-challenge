@@ -15,8 +15,13 @@
 
 **Blocked by:** 02, 03, 04 (05 if done)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Walkthrough done, trace ids recorded
-- [ ] README section
-- [ ] Diary entry with clock and evidence
+- [x] Walkthrough done, trace ids recorded
+- [x] README section
+- [x] Diary entry with clock and evidence
+
+## Comments
+
+- Walkthrough done live with the human (session 5): handback and close paths, anonymous, events panel, Review tab. Trace ids and review fixes in `IMPROVEMENT_RUN_DIARY.md` (session 5, Demo clients).
+- README: new "Demo client" section (views, events buffer limits, walkthrough, demo users, reset), Operator API lines for `/operator/mine` and `/events`, smoke against a throwaway stack, known limitations.

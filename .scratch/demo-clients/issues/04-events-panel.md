@@ -15,7 +15,7 @@
 - [x] Ring buffer handler, bounded, holds the redacted JSON
 - [x] Endpoint: Merchant 403; not visible → 404; only this Conversation's traces; a Judge event emitted after the request is included
 - [x] Events panel in the Operator view
-- [ ] Limits written in the README and diary
+- [x] Limits written in the README and diary
 
 ## Comments
 

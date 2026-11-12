@@ -6,7 +6,7 @@ A containerized multi-agent support assistant for Getnet merchants. A **Router A
 
 Domain vocabulary is in [`GLOSSARY.md`](GLOSSARY.md). Architecture decisions are in [`docs/adr/`](docs/adr/). The spec and tickets are in [`.scratch/getnet-multi-agent/`](.scratch/getnet-multi-agent/).
 
-After the evaluation, an improvement run fixed several weak spots (Judge Evidence and model, scenario facts, log privacy, container, CI). Its specs are [`.scratch/improvement-fixes/`](.scratch/improvement-fixes/), [`.scratch/eval-expansion/`](.scratch/eval-expansion/) (the [eval runner](#eval-runner)), [`.scratch/conversations-identity/`](.scratch/conversations-identity/) and [`.scratch/human-takeover/`](.scratch/human-takeover/), and its clock, sessions and decisions are in [`IMPROVEMENT_RUN_DIARY.md`](IMPROVEMENT_RUN_DIARY.md).
+After the evaluation, an improvement run fixed several weak spots (Judge Evidence and model, scenario facts, log privacy, container, CI). Its specs are [`.scratch/improvement-fixes/`](.scratch/improvement-fixes/), [`.scratch/eval-expansion/`](.scratch/eval-expansion/) (the [eval runner](#eval-runner)), [`.scratch/conversations-identity/`](.scratch/conversations-identity/), [`.scratch/human-takeover/`](.scratch/human-takeover/) and [`.scratch/demo-clients/`](.scratch/demo-clients/) (the [demo client](#demo-client)), and its clock, sessions and decisions are in [`IMPROVEMENT_RUN_DIARY.md`](IMPROVEMENT_RUN_DIARY.md).
 
 ## Quick start
 
@@ -16,6 +16,8 @@ docker compose up --build   # builds the image, builds the RAG index at startup,
 ```
 
 The container runs as a non-root user (`app`, uid 10001). All state lives on one named volume, `state` (mounted at `/app/state`): the Corpus index (`chroma/`) and the Conversations database (`conversations.db`). Recreating or restarting the container reuses both; the index is rebuilt only when the Corpus, embedding model or chunking settings change. `docker compose down -v` deletes both. Conversations survive a restart, but login tokens do only if `JWT_SECRET` is set in `.env`; with the default empty secret, log in again after a restart (old tokens get 401).
+
+Then open **http://localhost:8000/** for the [demo client](#demo-client), or use the shell helper below.
 
 `/health` returns `{"status":"ok"}` once the index is ready. Until then it returns 503 `{"status":"starting"}`. The compose healthcheck waits for it.
 
@@ -76,7 +78,8 @@ The challenge's bonus: a fourth agent that requests help from a human Operator. 
 - **Operator API** (`app/operator.py`), role `operator` only (no token 401, Merchant 403). Operators see only Conversations that had a Handoff or carry a Review flag; any other id → 404. Mock Operators: `operador1`, `operador2`.
 
   ```
-  GET  /operator/queue                          waiting_human, oldest first: category, priority, customer_ask, created_at
+  GET  /operator/queue                          waiting_human, newest first: category, priority, customer_ask, created_at
+  GET  /operator/mine                           human, claimed by the caller, newest claim first (queue fields + claimed_at)
   GET  /operator/review                         Review-flagged Conversations (any Mode), newest first
   GET  /operator/conversations/{id}             Turns, current Handoff Brief, Mode, claim, Review flag, Merchant's account from the fixture
   POST /operator/conversations/{id}/claim       waiting_human → human (atomic; second claim → 409); refreshes the brief if the Merchant wrote more
@@ -84,12 +87,46 @@ The challenge's bonus: a fourth agent that requests help from a human Operator. 
   POST /operator/conversations/{id}/handback    human → bot; claiming Operator only; stores a fixed bilingual "back with the virtual assistant" Turn
   POST /operator/conversations/{id}/close       claiming Operator in human, any Operator in waiting_human; stores a fixed "closed" Turn
   POST /operator/conversations/{id}/reviewed    clears the Review flag
+  GET  /operator/conversations/{id}/events      recent log lines of the Conversation's traces (see Demo client)
   ```
 
   Wrong Mode → 409 (`not_waiting`, `wrong_mode`); another Operator's claim → 403 (`not_claimer`). Account data comes from `data/merchants.json` by software, never from the model.
 - **After handback** the bot sees Operator Turns in its history as assistant messages prefixed `[Human agent]`, so follow-ups continue in context.
 - **Audit.** Every Operator action (`claim`, `reply` with `used_suggestion`, `handback`, `close`, `reviewed`) is an `audit` row: operator, action, conversation id, time. No message text or brief. Reads aren't audited. The retention purge deletes Handoffs with their Conversation and keeps audit rows.
 - **Quality.** On an escalated Turn the `answer` Judge uses an escalation rubric (brief faithful to the Conversation, no invented claims; transfer message in the Merchant's language) and sees the brief. An `answer` Judge Score below 0.7 sets the Conversation's **Review flag** (no Mode change); route and coverage scores never do. Operator replies never go through `/chat`, so no Judge scores them.
+
+## Demo client
+
+A small web page for trying the system without curl, outside the challenge's core deliverable. Spec and tickets: [`.scratch/demo-clients/`](.scratch/demo-clients/). It is plain HTML/JS/CSS in `app/static/`, served by the app at `/` (no build step, no CDN, `Content-Security-Policy: default-src 'self'`). All user and model text is rendered as text, never as HTML; a test fails if a script writes HTML from anything but a static string.
+
+- **Login.** With `DEMO_LOGIN=true` (compose) a dropdown lists the demo users from `GET /dev/users` (fixture Merchants and mock Operators), plus a free-text id. Without it, paste a token. The token is kept in `localStorage`; a 401 sends you back to login ("Session expired").
+- **Anonymous.** Before logging in you can chat as an anonymous visitor: product questions only, nothing stored.
+- **Merchant view.** Your Conversations with their Mode, the chat with Sources under each answer, a banner while waiting for or talking to an Operator (Operator replies are labelled "Operator"), a read-only closed Conversation with "Start a new conversation", and your account from `/me`.
+- **Operator view.** Tabs **Queue** (waiting, newest first), **Mine** (claimed by you) and **Review** (flagged). The detail shows the Turns, the Handoff Brief, the Merchant's account from the fixture, an events panel, and a reply box prefilled with the suggested reply (`used_suggestion` is true only if it is sent unchanged). The buttons follow the Mode and the claim. The open Conversation is reopened after a reload.
+- **Polling**, no push: the open Conversation every 2 s, the lists every 5 s, paused while the tab is hidden.
+- **Events panel.** `GET /operator/conversations/{id}/events` returns the log lines of that Conversation's traces: its `request` lines and the Judge lines logged later for the same `trace_id`, oldest first (Operator only, same visibility rule as the detail). They come from an in-memory buffer: a second logging handler keeps the last 2000 lines exactly as written to stdout (already redacted); stdout stays the source of record. **Limits:** the buffer is lost on restart; it is per process, so it works only with a single instance; it is bounded, so older events drop out and an older Conversation can show an empty panel. Plain-text warnings (e.g. a failed Judge) have no `trace_id` and don't show. There is no global log tail.
+
+Two-window walkthrough: open a private window as a Merchant and a normal one as `operador1`.
+
+1. Merchant `cliente1975`: "Meu depósito de ontem não caiu, o que aconteceu?" (answered from the account: deposits returned, bank account closed), then "Preciso trocar minha conta bancária para receber" (escalates).
+2. Operator: the Conversation is in the Queue; open it, claim it (it moves to Mine), send the suggested reply, hand back. The Merchant sees the reply as "Operator", then the bot again.
+3. Merchant `cliente2010`: "Minha maquininha do caixa principal parou de aceitar cartão", then "Já reiniciei e continua o erro, preciso de outra máquina" (escalates). The Operator closes it; the Merchant's Conversation becomes read-only.
+
+Demo users:
+- **`cliente1988`** (Padaria Pão Dourado): offline Terminal (weak Wi-Fi), card declines, D+1/D+30 Settlements. Used by the evals.
+- **`cliente2024`** (Livraria Página Viva): everything healthy, D+0 Settlements. Used by the evals.
+- **`cliente1975`** (Restaurante Sabor da Serra): deposits returned and held because the bank account on file is closed; changing it needs a person, so it leads to an Escalation.
+- **`cliente2010`** (Farmácia Bem Viver): card reader fault on one Terminal; restart hint first, a replacement needs a person.
+- **`cliente2077`** (Ateliê Linha & Agulha): quiet Merchant, few sales, small Settlements.
+- **`operador1`**, **`operador2`**: Operators. Any other id logs in as a Merchant with no account.
+
+To start the demo with an empty Queue and Review list (keeps the Corpus index):
+
+```bash
+docker compose stop api
+docker compose run --rm --no-deps --entrypoint sh api -c 'rm -f /app/state/conversations.db*'
+docker compose start api
+```
 
 ## Overview
 
@@ -140,7 +177,7 @@ Every Agent sees the Conversation's last 10 Turns as `history` before the curren
   - `unsupported`: off-topic, another Merchant's data, prompt injection, harmful.
   - Output that can't be parsed falls back to `knowledge`.
 - **Knowledge Agent** (`app/knowledge.py`). A LangChain `create_agent` with `search_corpus` and `web_search` (Tavily, with DuckDuckGo as fallback), a tool-call limit of 4, and a dynamic prompt that includes today's date. It queries the Corpus in Portuguese and grounds every claim. **Sources come only from tool artifacts**, never from text the model writes.
-- **Customer Support Agent** (`app/support.py`). A `create_agent` over `data/merchants.json` (mock merchants `cliente1988` and `cliente2024`). Dates in the data are relative to today, so "yesterday" always has data.
+- **Customer Support Agent** (`app/support.py`). A `create_agent` over `data/merchants.json` (mock merchants: see [Demo client](#demo-client)). Dates in the data are relative to today, so "yesterday" always has data.
   - `user_id` reaches the tools through `ToolRuntime` context and is never a tool argument.
   - Unknown users get an agent with no account tools; `escalate_to_human` is its only tool.
 - **RAG pipeline** (`scripts/fetch_corpus.py` → `app/rag.py` → `app/knowledge.py`):
@@ -160,7 +197,7 @@ Every Agent sees the Conversation's last 10 Turns as `history` before the curren
   - Provider errors or rate limits, from any provider, after retries → 503 `{error:{code,message}, trace_id}`.
   - Unexpected errors → 500 with a generic message.
   - Unsupported Messages and unknown users are normal 200 responses.
-- **Observability** (`app/observability.py`, `app/judge.py`, `app/redact.py`). One JSON log line per request: `trace_id, conversation_id, user_ref, message, intent, agent, tools, tokens, latency_ms, outcome` (`message_length` instead of `message` when `LOG_MESSAGES=none`). All log output is redacted (see [Privacy](#privacy)). When `JUDGE_ENABLED`, three background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
+- **Observability** (`app/observability.py`, `app/judge.py`, `app/redact.py`). One JSON log line per request: `time, level, event, trace_id, conversation_id, user_ref, message, intent, agent, tools, tokens, latency_ms, outcome` (`message_length` instead of `message` when `LOG_MESSAGES=none`). All log output is redacted (see [Privacy](#privacy)). When `JUDGE_ENABLED`, three background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
   - `route`: was the Intent right?
   - `answer`: is every claim in the reply supported by the **Evidence**, and does it answer the Message? Evidence is the tool output the specialist Agent actually saw (`search_corpus`/`web_search` results, including Chunks below the threshold, or the account tool data), capped at 6,000 characters with a truncation marker. It stays in graph state and is not returned by `/chat`.
   - `coverage`: which Intents did the Message need (`intents_needed`), and did the reply cover every part (`fully_answered`, `missing`)? It scores 1 when fully answered. A Message that needs more than one Intent is a **Mixed question**.
@@ -404,6 +441,14 @@ To run the shared scenario dataset (the 10 example Messages from the challenge, 
 uv run python scripts/scenarios.py            # or: scripts/scenarios.py http://host:port
 ```
 
+It writes real Conversations (and escalated ones land in the Operator Queue), so run it against a throwaway stack rather than the one you demo:
+
+```bash
+PORT=8001 docker compose -p aigt-smoke up -d --build    # own volume; builds its own Corpus index on first start
+uv run python scripts/scenarios.py http://localhost:8001
+docker compose -p aigt-smoke down -v
+```
+
 It logs in as each scenario's user id through `POST /dev/login` (so it needs `DEMO_LOGIN=true`, as in compose) and sends the token. Scenarios with `"user_id": null` are anonymous visitors and are sent without a token: a product question (answered) and an account question (its facts check the login reply).
 
 Each scenario prints a routing mark and a facts mark (`✓`, `✗`, or `-` when it declares no facts), then the Intent, agent, steps, `trace_id`, answer, Sources and any missing facts. The report ends with two separate totals (here, an all-pass run):
@@ -418,6 +463,7 @@ followed by the missing facts per scenario. A fact is a list of accepted alterna
 Mock merchants:
 - **`cliente1988`** has pending Settlements from yesterday, an offline Terminal (weak Wi-Fi) and recent declines (codes 51 and 54).
 - **`cliente2024`** is the clean contrast: online Terminal, everything paid out.
+- More demo Merchants (not used by the scenarios) are listed under [Demo client](#demo-client).
 
 ## Eval runner
 
@@ -522,7 +568,10 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 ```
 .
 ├── app/                    # the service
-│   ├── main.py             # FastAPI app: /chat, /me, /dev/login, /health, error mapping, request logging, judge scheduling
+│   ├── main.py             # FastAPI app: /chat, /me, /dev/login, /dev/users, /health, /, error mapping, request logging, judge scheduling
+│   ├── operator.py         # Operator API: queue, mine, review, detail, claim/reply/handback/close/reviewed, events
+│   ├── escalator.py        # Escalator Agent: Handoff Brief + transfer message
+│   ├── static/             # demo client: index.html, app.js, merchant.js, operator.js, events.js, style.css
 │   ├── auth.py             # tokens (issue/verify), Principal, mock operators
 │   ├── store.py            # SQLite store: Conversations and Turns (WAL)
 │   ├── graph.py            # LangGraph StateGraph, GraphState, Intent/Agent types, Source dedup
@@ -533,7 +582,7 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 │   ├── rag.py              # corpus loading, chunking, fastembed, Chroma index
 │   ├── llm.py              # chat model factory + provider-error classification
 │   ├── judge.py            # route / answer / coverage LLM judges (answer rated against Evidence)
-│   ├── observability.py    # JSON log lines, user_ref, LOG_MESSAGES modes
+│   ├── observability.py    # JSON log lines, user_ref, LOG_MESSAGES modes, in-memory events buffer
 │   ├── redact.py           # personal-data redactor for all log output
 │   └── settings.py         # pydantic-settings (env vars)
 ├── corpus/                 # committed Getnet pages as markdown with url/lang/title front matter
@@ -556,6 +605,7 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 ├── .scratch/getnet-multi-agent/  # spec.md + tickets (local issue tracker)
 ├── .scratch/improvement-fixes/   # improvement run: fixes spec + tickets
 ├── .scratch/eval-expansion/      # improvement run: eval expansion spec + tickets
+├── .scratch/demo-clients/        # improvement run: demo client spec + tickets
 ├── IMPROVEMENT_RUN_DIARY.md  # improvement run: clock, sessions, decisions, scenario results
 ├── GLOSSARY.md             # domain vocabulary
 ├── Dockerfile, docker-compose.yml, .env.example
@@ -600,7 +650,9 @@ The README (`11`, `12`) and the video came after the timebox.
 - **Lint:** ruff isn't a project dependency (run it with `uvx ruff check`), and with its default rules the code has 28 findings, all already on `main` before the human takeover.
 - **Conversations:** the Agents see only the last 10 Turns (no summary of older ones); whether real models resolve follow-ups well is checked live, not by the eval runner (its scenarios are single Messages with empty history).
 - **Out of scope:** real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
-- ~~**Human Escalation Agent (designed, not built).**~~ **Built** in the improvement run: the [Escalator Agent and human takeover](#human-takeover). Not built: an Operator UI (curl only), push delivery (the Merchant polls), routing to Operators by skill, SLAs and notifications, approval-style HITL.
+- ~~**Human Escalation Agent (designed, not built).**~~ **Built** in the improvement run: the [Escalator Agent and human takeover](#human-takeover). An Operator UI is now part of the [demo client](#demo-client). Not built: push delivery (the Merchant polls), routing to Operators by skill, SLAs and notifications, approval-style HITL.
 - **Takeover limits:** `used_suggestion` is reported by the client, not checked against the brief's `suggested_reply`; the `suggested_reply` sometimes reads like a transfer note rather than an answer the Operator would send; a brief rewritten on claim doesn't see the original Turn's Evidence (not stored); the `coverage` Judge sees only the transfer message on an escalated Turn, so it can score it low.
+- **Escalation drops the bot's explanation:** when a specialist escalates, its draft is discarded and the Merchant gets only the transfer message, even if the bot had found what happened (the demo fixture for `cliente1975` was worded so the first question is answered and only the request for a change escalates).
+- **Demo client:** polling only (no SSE); a Merchant can't close a Conversation themselves ("finalizar conversa" is routed `unsupported`); with an empty `JWT_SECRET` every restart logs everyone out; tested in headless Chrome against a fake graph and live by hand, not by browser tests in CI.
 - **Other bonuses (designed, not built):**
   - the dashboards, alerts and golden-set regression runs described in [Evaluation and observability strategy](#evaluation-and-observability-strategy).
