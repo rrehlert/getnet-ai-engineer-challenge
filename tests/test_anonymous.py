@@ -160,6 +160,18 @@ def test_judges_are_told_an_anonymous_visitor_is_not_logged_in():
     run_judges(model, privacy=LogPrivacy(key=b"k"), trace_id="t", message="my sales", intent="support",
                answer=LOGIN_REPLY, sources=[], evidence=[], user_id=None)
 
-    route, answer, _coverage = model.prompts
+    route, answer, coverage = model.prompts
     assert "not logged in" in route[1][1] and "None" not in route[1][1]
     assert "log in" in answer[0][1]
+    assert "not logged in" in coverage[1][1] and "None" not in coverage[1][1]
+    assert "asking them to log in fully answers" in coverage[0][1]
+
+
+def test_coverage_judge_for_a_logged_in_merchant_has_no_login_rule():
+    from app.judge import JUDGES
+
+    _, build = JUDGES["coverage"]
+    (_, system), (_, human) = build(message="m?", intent="support", answer="r", sources=[], evidence=[], user_id="c1")
+
+    assert "log in" not in system
+    assert "Merchant: c1" in human

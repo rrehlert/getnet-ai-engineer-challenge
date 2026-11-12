@@ -208,4 +208,6 @@ Checkpoint evals: no separate run at +120m/+150m; the ticket 07 eval re-run (abo
 
 Off the clock: README section "Login, Conversations and retention", the live coverage Judge limitation, and this clock entry.
 
+
+Off the clock, after the session: the coverage Judge now gets the Merchant line and a login rule for anonymous visitors (`app/judge.py`, test in `tests/test_anonymous.py`). Live trace `af55e12ecc77453884f463136bc79b29`: an anonymous account question now scores coverage 1.0 (was 0.2). The eval was not re-run, so the scenario 19 coverage in the results above is still the old 0.2–0.3.
 Next: `human-takeover` (B4).

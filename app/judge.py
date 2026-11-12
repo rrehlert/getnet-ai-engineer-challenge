@@ -83,6 +83,11 @@ ANONYMOUS_SUPPORT_RUBRIC = (
     "to see their account, offering help with Getnet products meanwhile."
 )
 ANONYMOUS_MERCHANT = "none (a visitor who is not logged in; account questions are still `support`)"
+# Without it the coverage Judge marks the login reply as leaving the account question unanswered.
+ANONYMOUS_COVERAGE_RULE = (
+    "\n\nThe visitor is not logged in, so account data must not be given: for a `support` part, "
+    "asking them to log in fully answers it."
+)
 
 ANSWER_PROMPT = """You judge a reply from Getnet merchant support.
 Evidence is the tool output the Agent actually saw while answering. A claim that the
@@ -137,8 +142,11 @@ def _answer_input(
     return [("system", ANSWER_PROMPT.format(intent=intent, rubric=rubric)), ("human", human)]
 
 
-def _coverage_input(message: str, intent: Intent, answer: str, **_) -> list[tuple[str, str]]:
-    return [("system", COVERAGE_PROMPT), ("human", f"Message: {message}\nIntent chosen: {intent}\nReply: {answer}")]
+def _coverage_input(message: str, intent: Intent, answer: str, user_id: str | None = "", **_) -> list[tuple[str, str]]:
+    system = COVERAGE_PROMPT + (ANONYMOUS_COVERAGE_RULE if user_id is None else "")
+    merchant = ANONYMOUS_MERCHANT if user_id is None else user_id
+    human = f"Merchant: {merchant}\nMessage: {message}\nIntent chosen: {intent}\nReply: {answer}"
+    return [("system", system), ("human", human)]
 
 
 # Judge Type -> (structured output schema, prompt builder)
