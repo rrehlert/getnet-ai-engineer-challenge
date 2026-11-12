@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from app.auth import Principal
 from app.errors import AuthError, error_response
 from app.graph import HandoffBrief, Node, Priority, Source, fallback_brief
+from app.observability import EventBuffer
 from app.store import (
     ActionResult,
     Conversation,
@@ -88,6 +89,11 @@ class ReviewList(BaseModel):
     conversations: list[ReviewItem]
 
 
+class EventList(BaseModel):
+    # Log events as stdout has them (redacted JSON objects); their fields vary by event.
+    events: list[dict]
+
+
 # Fixed bilingual `assistant` Turns that tell the polling Merchant (and the bot's history) about a handover.
 HANDBACK_TURN = (
     "Você está de volta com o assistente virtual. Como posso ajudar? "
@@ -114,10 +120,12 @@ def operator_router(
     store: Callable[[], Store],
     today: Callable[[], date],
     escalator: Callable[[], Node],
+    events: EventBuffer,
 ) -> APIRouter:
     """`principal`: the app's dependency for the verified caller (401 without a token).
     Providers, called per request: `store`; `today`, the date account data is resolved for;
-    `escalator`, the Escalator Agent that rewrites a stale brief on claim."""
+    `escalator`, the Escalator Agent that rewrites a stale brief on claim.
+    `events`: the in-memory buffer of recent log lines the events panel reads."""
 
     def operator(caller: Annotated[Principal, Depends(principal)]) -> Principal:
         if caller.role != "operator":
@@ -175,6 +183,15 @@ def operator_router(
         if conversation is None:
             return _not_found()
         return view(conversation)
+
+    @router.get("/conversations/{conversation_id}/events", response_model=EventList)
+    def conversation_events(conversation_id: str, caller: Operator):
+        """Buffered log events of the Conversation's traces, oldest first, including Judge events
+        logged after the reply. Recent only: per process, lost on restart, oldest dropped first."""
+        conversation = store().operator_conversation(conversation_id)
+        if conversation is None:
+            return _not_found()
+        return EventList(events=events.for_conversation(conversation.id))
 
     @router.post("/conversations/{conversation_id}/claim", response_model=ConversationDetail)
     def claim(conversation_id: str, caller: Operator):

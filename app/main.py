@@ -20,7 +20,7 @@ from app.errors import error_response as _error
 from app.graph import HISTORY_TURNS, Agent, Intent, Node, Source, agent_for, build_graph
 from app.judge import FLAG_BELOW, run_judges
 from app.llm import is_provider_error, provider_error_code
-from app.observability import LogPrivacy, log_request, setup_logging
+from app.observability import EVENTS, EventBuffer, LogPrivacy, log_request, setup_logging
 from app.operator import operator_router
 from app.store import Mode, ModeChanged, NewTurn, Role, Store
 
@@ -135,6 +135,7 @@ def create_app(
     auth: AuthSettings | None = None,
     store: Store | None = None,
     escalator: Node | None = None,
+    events: EventBuffer | None = None,
 ) -> FastAPI:
     """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted.
 
@@ -154,6 +155,10 @@ def create_app(
 
     `escalator` (the Escalator Agent that rewrites a stale Handoff Brief on an
     Operator's claim) defaults to one on `LLM_MODEL`, built on first use.
+
+    `events` (recent log lines for the Operator's events panel) defaults to
+    `EVENTS`, the buffer `setup_logging` installs; an injected one must be
+    attached to the `app` logger by the caller.
 
     `load_index` runs in a background thread at startup; until it returns,
     `/health` and `/chat` answer 503. Without it there is no index to wait for.
@@ -506,6 +511,7 @@ def create_app(
 
     app.include_router(operator_router(
         principal=principal, store=get_store, today=lambda: get_auth().clock().date(), escalator=get_escalator,
+        events=EVENTS if events is None else events,
     ))
 
     return app

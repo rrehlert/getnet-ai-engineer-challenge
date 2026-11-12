@@ -6,7 +6,9 @@ import json
 import logging
 import secrets
 import sys
+import threading
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from typing import get_args
 
@@ -118,10 +120,60 @@ class JsonFormatter(logging.Formatter):
         return json.dumps({"level": record.levelname, **data}, ensure_ascii=False, default=str)
 
 
+EVENT_BUFFER_SIZE = 2000
+
+
+class EventBuffer(logging.Handler):
+    """The last `capacity` log records in memory, for the Operator's events panel.
+
+    Each record is formatted by `JsonFormatter`, i.e. the exact line stdout gets (already
+    redacted), and kept parsed back to a dict. stdout stays the source of record: this
+    buffer is per process, lost on restart, and drops its oldest events when full.
+    Thread-safe: Judges log from background tasks while requests read it.
+    """
+
+    def __init__(self, capacity: int = EVENT_BUFFER_SIZE):
+        super().__init__()
+        self.setFormatter(JsonFormatter())
+        self._events: deque[dict] = deque(maxlen=capacity)
+        self._mutex = threading.Lock()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            event = json.loads(self.format(record))
+        except Exception:  # noqa: BLE001 - logging must never raise into the caller
+            self.handleError(record)
+            return
+        with self._mutex:
+            self._events.append(event)
+
+    def events(self) -> list[dict]:
+        """Every buffered event, oldest first."""
+        with self._mutex:
+            return list(self._events)
+
+    def for_conversation(self, conversation_id: str) -> list[dict]:
+        """Events of the Conversation's traces, oldest first: the `trace_id`s of its buffered
+        `request` events (so later Judge events of those traces are included)."""
+        events = self.events()
+        traces = {
+            e["trace_id"] for e in events
+            if e.get("event") == "request" and e.get("conversation_id") == conversation_id and e.get("trace_id")
+        }
+        return [e for e in events if e.get("trace_id") in traces]
+
+
+# The production buffer, installed by `setup_logging` and read by the app unless one is injected.
+EVENTS = EventBuffer()
+
+
 def setup_logging() -> None:
-    """Install the JSON handler on the `app` loggers once (production entrypoint only)."""
+    """Install the JSON handler on the `app` loggers once (production entrypoint only),
+    plus `EVENTS`, the in-memory buffer of the same lines."""
     app_log = logging.getLogger("app")
-    if any(isinstance(h.formatter, JsonFormatter) for h in app_log.handlers):
+    if EVENTS not in app_log.handlers:
+        app_log.addHandler(EVENTS)
+    if any(isinstance(h, logging.StreamHandler) and isinstance(h.formatter, JsonFormatter) for h in app_log.handlers):
         return
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
