@@ -15,7 +15,7 @@ cp .env.example .env        # set OPENAI_API_KEY (an OpenRouter key by default)
 docker compose up --build   # builds the image, builds the RAG index at startup, serves on :8000
 ```
 
-The container runs as a non-root user (`app`, uid 10001). All state lives on one named volume, `state` (mounted at `/app/state`): the Corpus index (`chroma/`) and the Conversations database (`conversations.db`). Recreating or restarting the container reuses both; the index is rebuilt only when the Corpus, embedding model or chunking settings change. `docker compose down -v` deletes both.
+The container runs as a non-root user (`app`, uid 10001). All state lives on one named volume, `state` (mounted at `/app/state`): the Corpus index (`chroma/`) and the Conversations database (`conversations.db`). Recreating or restarting the container reuses both; the index is rebuilt only when the Corpus, embedding model or chunking settings change. `docker compose down -v` deletes both. Conversations survive a restart, but login tokens do only if `JWT_SECRET` is set in `.env`; with the default empty secret, log in again after a restart (old tokens get 401).
 
 `/health` returns `{"status":"ok"}` once the index is ready. Until then it returns 503 `{"status":"starting"}`. The compose healthcheck waits for it.
 

@@ -9,9 +9,11 @@
 
 **Blocked by:** 02, 04, 05, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Live check steps executed, trace ids recorded
-- [ ] Conversation survives container restart
-- [ ] Eval re-run compared with baseline, result recorded
-- [ ] README and diary updated
+- [x] Live check steps executed, trace ids recorded
+- [x] Conversation survives container restart
+- [x] Eval re-run compared with baseline, result recorded
+- [x] README and diary updated
+
+Results: `IMPROVEMENT_RUN_DIARY.md`, session 3 (live check traces, restart, eval vs baseline). README: login, anonymous access, Conversations and retention were already covered by tickets 01–06; added a Quick start note that tokens need `JWT_SECRET` set to survive a restart.

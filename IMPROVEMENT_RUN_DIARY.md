@@ -22,7 +22,7 @@ Order: **A. Fixes → B. Core → C. QoL/extras**. One spec per feature under `.
 |---|---|
 | `improvement-fixes` | A. Judge sees evidence, separate judge model, scenarios split routing vs answer quality, log privacy, judge events readable on their own, non-root container, Chroma volume, CI |
 | `eval-expansion` | B1. Coverage judge, mixed-question scenarios, multiple runs + baseline, retrieval recall@k |
-| `conversations-identity` | B2 + B3. SQLite persistence, multi-turn memory with ownership, dev login + JWT, roles |
+| `conversations-identity` | B2 + B3. SQLite persistence, multi-turn memory with ownership, dev login + JWT, roles. **Done** (session 3) |
 | `human-takeover` | B4. Human takeover of conversations, Escalator agent, operator API, audit |
 | `demo-clients` | C. Merchant and operator frontends, more mock data, CLI helper, SSE |
 | `multi-intent-router` | B5. Only if coverage data shows enough mixed questions answered incompletely |
@@ -158,3 +158,43 @@ Notable misses:
 - 14 Caixa 1 offline + Wi-Fi (Mixed): routed to `knowledge` 2/3. Facts failed 2/3 because "2.4 GHz" was missing. route Judge 0.2–0.3.
 - 13 and 17 (PT support, payout amounts): answer 0.0 on all 3 runs. In 17 the Judge flags a real error: the reply says credit "cai até o fim do dia", but it is scheduled D+30.
 - The answer Judge looks harsh: 0.0 on 02 (weather), 05 (offline machine) and 16, even when facts pass. Its reasons often penalise omissions, which is the coverage Judge's job. This is a candidate for tightening the answer Judge prompt.
+
+### Session 3 — 2026-11-11
+
+Goal: `conversations-identity` (B2 + B3): tickets, then implement them.
+
+Done (clock started 21:06:46, tag `improve-s3-start`):
+
+| Time | Commit | What |
+|---|---|---|
+| 21:06:46 | `c71ff8d` | `conversations-identity` tickets 01–07 |
+| 21:15:17 | `57d8d36` | 01: token identity on `/chat` (dev login, JWT verify, `/me`, login-first clients) |
+| 21:25:13 | `8c52ff4` | 02 merged: anonymous visitors (Knowledge only, login reply) |
+| 21:26:12 | `8c134a6` | 03 merged: Conversations persisted in SQLite (`STATE_DIR` volume) |
+| 21:28:42 | `5b5e211` | 06 merged: retention purge at startup |
+| 21:30:00 | `d324f00` | 05 merged: list Conversations, read Turns |
+| 21:30:21 | `5b48b6a` | 04 merged: last 10 Turns reach Router and specialists |
+| 21:32:14 | `e78994c` | README: retention at startup only; Judges don't see history |
+
+#### Live check (ticket 07)
+
+Fresh `docker compose up --build` on `e78994c` with Judges on, healthy at 21:44:12. The Merchant is `cliente1988`, logged in through `/dev/login`.
+
+- "My card machine is offline" (trace `fcf5a92671564cab830346e2988aa994`) → `support`, `get_terminal_status`, new Conversation `c4caac36-…`. Judges: route 1.0, coverage 1.0, answer 0.0 (it disliked "yesterday" for 2026-11-11 and the empty Sources).
+- "It is the Smart one" in the same Conversation (trace `62d118cc788f4009b6ea977ac90fd183`) → `support`, answered in context: "Caixa 1 is the Getnet POS Smart (Android)". Judges: route 0.0, answer 0.0, coverage 1.0. The route Judge called the bare follow-up "likely knowledge", which is the known limitation (Judges don't see history).
+- Anonymous "Quanto eu tenho para receber amanhã?" (trace `3d7f90a599664c42970e1f05154656b6`) → `support`, `agent` `router`, steps `router, login`, bilingual login reply, `conversation_id` null, `user_ref` `anonymous`. Live Judges: route 1.0, answer 1.0, coverage 0.2 ("only asks the user to log in"). The live coverage Judge is not told about the anonymous login rule.
+- `docker compose restart` → `retention purge: deleted 0`. `GET /conversations` still lists `c4caac36-…` with its 4 Turns (ids 5–8, in order). The old token got 401 because `JWT_SECRET` was empty in `.env`, so a new secret was generated. The README Quick start now says this.
+
+#### Eval re-run (ticket 07)
+
+Ran `uv run python -m scripts.eval` on `e78994c` (clean tree), 21:45:12–21:56:45. Results are in `evals/results/20261112T004519Z.json`; the baseline was not replaced.
+
+- 3 runs × 19 scenarios = 57 runs, 0 errors. The dataset hash differs from the baseline (2 anonymous scenarios added), so the deltas are not like-for-like.
+- Overall: routing 100% (+0pp), facts 77% (−5pp), answer 0.46 (+0.02), coverage 0.79 (−0.02), route 0.93 (+0.02, min 0.20 → 0.40).
+- Knowledge facts were 42% (−25pp). The drop is Get Clássica: scenario 01 passed 3/3 → 1/3 and the new anonymous 18 passed 1/3, both missing "4G" because the reply said no Clássica info was found. Corpus coverage is thin there (known limitation). Eval scenarios have empty history, so nothing here goes through the new history path. Scenario 04 (Pix key) passed 2/3; 09 (48 installments) went 0/3 → 1/3.
+- Support facts 93% (+5pp). The anonymous account scenario 19 passed 3/3 with answer 1.0.
+- Mixed questions 12/57 = 21%, incomplete 9/12 = 75% (−17pp). The verdict is still **build multi-intent Router**. The coverage Judge agreed with the labelled Mixed scenarios 12/12.
+- recall@4 12/14 = 86%, the same 2 misses. Tokens: 175,915 (−53 per run).
+- No regression attributable to `conversations-identity`. The facts drop is retrieval/LLM variance on a weak Corpus topic.
+
+Next: `human-takeover` (B4).
