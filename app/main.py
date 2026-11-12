@@ -85,7 +85,8 @@ def load_default_index():
 
 
 def build_default_graph(index):
-    """The production graph: Router, Knowledge and Customer Support Agents."""
+    """The production graph: Router, Knowledge, Customer Support and Escalator Agents."""
+    from app.escalator import make_escalator
     from app.knowledge import default_web_search, make_knowledge, make_search_corpus
     from app.llm import make_chat_model
     from app.router import make_router
@@ -98,7 +99,9 @@ def build_default_graph(index):
         make_search_corpus(index, settings.relevance_threshold),
         default_web_search(settings.tavily_api_key),
     ]
-    return build_graph(make_router(model), make_knowledge(model, tools), make_support(model))
+    return build_graph(
+        make_router(model), make_knowledge(model, tools), make_support(model), escalator=make_escalator(model)
+    )
 
 
 def _error(status: int, code: str, message: str, trace_id: str, headers: dict | None = None) -> JSONResponse:
@@ -365,23 +368,30 @@ def create_app(
             return _error(500, "internal_error", "Internal server error.", trace_id)
 
         intent = result["intent"]
+        # An Escalation (ADR 0006): the graph never escalates an anonymous visitor.
+        brief = result.get("handoff") if user_id is not None else None
         # Only after a successful run, so a failed one stores nothing. Sources, never Evidence.
         # Anonymous requests are stateless: no Conversation, nothing stored.
         if user_id is not None:
-            if conversation_id is None:
-                conversation_id = get_store().create_conversation(user_id)
-            get_store().append_turns(conversation_id, [
+            turns = [
                 NewTurn("user", request.message, intent=intent),
                 NewTurn("assistant", result.get("answer", ""), intent=intent, sources=result.get("sources", [])),
-            ])
+            ]
+            if brief is not None:
+                # One transaction: Turns, the open Handoff (the brief is stored, never logged), Mode waiting_human.
+                conversation_id = get_store().escalate(conversation_id, user_id, turns, dict(brief))
+            else:
+                if conversation_id is None:
+                    conversation_id = get_store().create_conversation(user_id)
+                get_store().append_turns(conversation_id, turns)
         log_outcome("ok", result)
         if judges_on():
             background.add_task(judge, trace_id, request.message, result)
         return ChatResponse(
             answer=result.get("answer", ""),
-            mode="bot",
+            mode="bot" if brief is None else "waiting_human",
             intent=intent,
-            agent=agent_for(intent, anonymous=user_id is None),
+            agent=agent_for(intent, anonymous=user_id is None, escalated=brief is not None),
             sources=result.get("sources", []),
             steps=result.get("steps", []),
             trace_id=trace_id,

@@ -37,6 +37,18 @@ CREATE TABLE IF NOT EXISTS turns (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS turns_conversation ON turns (conversation_id, id);
+CREATE TABLE IF NOT EXISTS handoffs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
+    brief TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    claimed_by TEXT,
+    claimed_at TEXT,
+    outcome TEXT CHECK (outcome IN ('handed_back', 'closed')),
+    ended_at TEXT
+);
+-- At most one open Handoff per Conversation (ADR 0006).
+CREATE UNIQUE INDEX IF NOT EXISTS handoffs_open ON handoffs (conversation_id) WHERE ended_at IS NULL;
 """
 
 
@@ -61,6 +73,24 @@ class NewTurn:
     content: str
     intent: str | None = None
     sources: Sequence[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Handoff:
+    """One Escalation episode (ADR 0006): open while `ended_at` is None."""
+
+    id: int
+    conversation_id: str
+    brief: dict  # the Handoff Brief; stored, never logged
+    created_at: datetime
+    claimed_by: str | None
+    claimed_at: datetime | None
+    outcome: Literal["handed_back", "closed"] | None
+    ended_at: datetime | None
+
+
+def _when(value: str | None) -> datetime | None:
+    return None if value is None else datetime.fromisoformat(value)
 
 
 @dataclass(frozen=True)
@@ -99,12 +129,16 @@ class Store:
 
     def create_conversation(self, owner: str) -> str:
         """A new, empty Conversation in `bot` Mode; returns its random id."""
-        cid, now = str(uuid.uuid4()), self._now()
         with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO conversations (id, owner, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                (cid, owner, now, now),
-            )
+            return self._create(conn, owner, self._now())
+
+    @staticmethod
+    def _create(conn: sqlite3.Connection, owner: str, now: str) -> str:
+        cid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO conversations (id, owner, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (cid, owner, now, now),
+        )
         return cid
 
     def conversation(self, conversation_id: str, owner: str) -> Conversation | None:
@@ -132,17 +166,58 @@ class Store:
 
     def append_turns(self, conversation_id: str, turns: Sequence[NewTurn]) -> None:
         """Append `turns` in order, in one transaction, and bump the Conversation's `updated_at`."""
+        with self._connect() as conn:
+            self._append(conn, conversation_id, turns, self._now())
+
+    @staticmethod
+    def _append(conn: sqlite3.Connection, conversation_id: str, turns: Sequence[NewTurn], now: str) -> None:
+        conn.executemany(
+            "INSERT INTO turns (conversation_id, role, content, intent, sources, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (conversation_id, t.role, t.content, t.intent, json.dumps(list(t.sources), ensure_ascii=False), now)
+                for t in turns
+            ],
+        )
+        conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+
+    def escalate(self, conversation_id: str | None, owner: str, turns: Sequence[NewTurn], brief: dict) -> str:
+        """An Escalation in one transaction: create the Conversation if `conversation_id` is None,
+        append `turns`, open a Handoff with `brief` and set Mode `waiting_human`; returns the id.
+
+        A second open Handoff raises `sqlite3.IntegrityError` and nothing is stored.
+        Callers check ownership first (as for `append_turns`).
+        """
         now = self._now()
         with self._connect() as conn:
-            conn.executemany(
-                "INSERT INTO turns (conversation_id, role, content, intent, sources, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    (conversation_id, t.role, t.content, t.intent, json.dumps(list(t.sources), ensure_ascii=False), now)
-                    for t in turns
-                ],
+            cid = conversation_id if conversation_id is not None else self._create(conn, owner, now)
+            self._append(conn, cid, turns, now)
+            conn.execute(
+                "INSERT INTO handoffs (conversation_id, brief, created_at) VALUES (?, ?, ?)",
+                (cid, json.dumps(brief, ensure_ascii=False), now),
             )
-            conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+            conn.execute("UPDATE conversations SET mode = 'waiting_human' WHERE id = ?", (cid,))
+        return cid
+
+    def handoffs(self, conversation_id: str) -> list[Handoff]:
+        """The Conversation's Handoffs, oldest first. No owner check: callers check first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM handoffs WHERE conversation_id = ? ORDER BY id", (conversation_id,)
+            ).fetchall()
+        return [
+            Handoff(
+                id=r["id"],
+                conversation_id=r["conversation_id"],
+                brief=json.loads(r["brief"]),
+                created_at=datetime.fromisoformat(r["created_at"]),
+                claimed_by=r["claimed_by"],
+                claimed_at=_when(r["claimed_at"]),
+                outcome=r["outcome"],
+                ended_at=_when(r["ended_at"]),
+            )
+            for r in rows
+        ]
 
     def turns(self, conversation_id: str, after: int = 0) -> list[Turn]:
         """Turns of the Conversation with id > `after` (default: all), oldest first. No owner check: callers check first."""
@@ -164,13 +239,14 @@ class Store:
         ]
 
     def purge(self, retention: timedelta) -> int:
-        """Delete Conversations not updated within `retention` of now, with their Turns; returns how many."""
+        """Delete Conversations not updated within `retention` of now, with their Turns and Handoffs; returns how many."""
         cutoff = (self.clock() - retention).astimezone(UTC).isoformat()
         with self._connect() as conn:
-            conn.execute(
-                "DELETE FROM turns WHERE conversation_id IN (SELECT id FROM conversations WHERE updated_at < ?)",
-                (cutoff,),
-            )
+            for child in ("turns", "handoffs"):
+                conn.execute(
+                    f"DELETE FROM {child} WHERE conversation_id IN (SELECT id FROM conversations WHERE updated_at < ?)",
+                    (cutoff,),
+                )
             return conn.execute("DELETE FROM conversations WHERE updated_at < ?", (cutoff,)).rowcount
 
     def conversations(self, owner: str) -> list[Conversation]:

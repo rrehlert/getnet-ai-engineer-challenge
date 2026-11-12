@@ -58,7 +58,7 @@ def brl(amount: str) -> Fact:
 
 DATASET = Path(__file__).resolve().parent.parent / "evals" / "scenarios.json"
 # Same values as `app.graph.Intent` (a test keeps them in sync); stdlib only so the script runs anywhere.
-INTENTS = {"knowledge", "support", "unsupported"}
+INTENTS = {"knowledge", "support", "unsupported", "human"}
 
 
 class DatasetError(ValueError):
