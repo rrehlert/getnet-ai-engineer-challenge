@@ -23,7 +23,7 @@ Order: **A. Fixes → B. Core → C. QoL/extras**. One spec per feature under `.
 | `improvement-fixes` | A. Judge sees evidence, separate judge model, scenarios split routing vs answer quality, log privacy, judge events readable on their own, non-root container, Chroma volume, CI |
 | `eval-expansion` | B1. Coverage judge, mixed-question scenarios, multiple runs + baseline, retrieval recall@k |
 | `conversations-identity` | B2 + B3. SQLite persistence, multi-turn memory with ownership, dev login + JWT, roles. **Done** (session 3) |
-| `human-takeover` | B4. Human takeover of conversations, Escalator agent, operator API, audit |
+| `human-takeover` | B4. Human takeover of conversations, Escalator agent, operator API, audit. **Done** (sessions 4–5) |
 | `demo-clients` | C. Merchant and operator frontends, more mock data, CLI helper, SSE |
 | `multi-intent-router` | B5. Only if coverage data shows enough mixed questions answered incompletely |
 
@@ -54,6 +54,9 @@ Decisions adopted at the start:
 | `improve+120m` | `57d8d36` | 1h59m | `conversations-identity` tickets; 01 (token identity) done |
 | `improve+150m` | `e78994c` | 2h16m | `conversations-identity` 01–06 merged; README for retention and Judges without history |
 | `improve-s3-stop` | `2deb383` | 2h43m | 07: live check and eval re-run vs baseline (session 3, below) |
+| `improve+180m` | `4306808` | 3h00m | `human-takeover` 01 (`/chat` by Mode), 02 (Intent `human`, Escalator Agent, Handoffs) merged |
+| `improve-s4-stop` | `6a07d75` | 3h25m | `human-takeover` 01–06 merged, code review fixes, implementation report; 07 pending |
+| `improve+210m` | `7a8d142` | 3h30m | 07 live check done (both paths); fixes: suggested_reply language, transfer-message wording |
 
 ## Sessions
 
@@ -212,3 +215,88 @@ Off the clock: README section "Login, Conversations and retention", the live cov
 
 Off the clock, after the session: the coverage Judge now gets the Merchant line and a login rule for anonymous visitors (`app/judge.py`, test in `tests/test_anonymous.py`). Live trace `af55e12ecc77453884f463136bc79b29`: an anonymous account question now scores coverage 1.0 (was 0.2). The eval was not re-run, so the scenario 19 coverage in the results above is still the old 0.2–0.3.
 Next: `human-takeover` (B4).
+
+### Session 4 — 2026-11-11
+
+Goal: implement `human-takeover` tickets 01–06 (B4) with implementer subagents, one per ticket in its own worktree, merged `--no-ff` into the integration branch `human-takeover`. Ticket 07 (docker, real LLM calls, eval) was left for a session with the human at the keyboard.
+
+Done (clock started 22:22:54, tag `improve-s4-start`):
+
+| Time | Commit | What |
+|---|---|---|
+| 22:33:25 | `7aa8372` | 01 merged: `/chat` by Mode (queued in `waiting_human`/`human`, 409 when `closed`), `mode` in replies and Turns |
+| 22:39:06 | `4306808` | 02 merged: Intent `human`, Escalator Agent, Handoffs table, one-transaction Escalation; anonymous login reply reworded |
+| 22:43:35 | `00145a6` | 05 merged: `escalate_to_human` tool in both specialists (middleware stops the loop) |
+| 22:46:26 | `dafd260` | 03 merged: Operator API (queue, detail, atomic claim, brief refresh), audit table |
+| 22:50:26 | `6a95147` | 04 merged: reply, handback, close; `[Human agent]` history prefix; `operador2` |
+| 22:51:27 | `ca5757a` | 06 merged: escalation rubric for the answer Judge, Review flag, review list |
+| 22:58:48 | `1251d0d` | Code review fixes: anonymous empty answer bug, `/chat` Mode races (409 `mode_changed`), glossary names, dedup |
+| 22:59:19 | `6a07d75` | Implementation report `.scratch/human-takeover/report.md` |
+| 23:05:33 | — | **Clock stop** (tag `improve-s4-stop`) |
+
+- Tests 274 → 377, all fakes, green after every merge. Lint: `uv run ruff check` doesn't run (ruff isn't a dev dependency); `uvx ruff check` (0.17.4) shows 28 errors already on `main`, and none were added.
+- Decisions: tool Escalation ends the agent loop through a middleware, not `return_direct` (that only stops when every tool call in the turn is return_direct); a Handoff keeps `brief_turn_id` so the brief is rewritten on claim only if the Merchant wrote more; `/reviewed` on an unflagged Conversation → 409.
+- Left out: README (written in session 5), live check and eval (ticket 07).
+
+### Session 5 — 2026-11-12
+
+Goal: `human-takeover` ticket 07: live check, eval scenarios and re-run, README.
+
+Done (clock started 16:10:45, tag `improve-s5-start`):
+
+| Time | Commit | What |
+|---|---|---|
+| 16:10:45 | — | Stack rebuilt from `ht-07-live-eval` (the running one was built from `main`), same `state` volume |
+| 16:11–16:12 | — | Live check, both paths (below) |
+| 16:13:11 | `8c52e22` | Escalator: `language` before `suggested_reply` (EN Merchant got a PT suggested reply) |
+| 16:13:58 | `7a8d142` | Transfer message doesn't say "Operator" to the Merchant |
+| 16:15:39 | `f355d3d` | Three takeover scenarios; scenarios check expected `agent`; eval passes the brief to the Judges |
+| 16:20:14 | `2674b61` | Escalation is a last resort (live smoke: 4 specialist answers escalated, facts 8/13) |
+| 16:23–16:37 | — | Eval re-run (below) |
+| 16:38:05 | `b88e8bc` | README: Human takeover section, graph diagram, curl walkthrough (off the clock) |
+| 16:38:23 | `e71eca4` | 07 ticket done |
+| 16:38:28 | `4bedc49` | 07 merged into `human-takeover` |
+
+#### Live check (ticket 07)
+
+`docker compose -p attempt_current up --build` from the 07 worktree, Judges on, reusing the session-3 database (it got `needs_review`, `handoffs` and `audit` on open). Merchant `cliente1988`, Operators `operador1` and `operador2`.
+
+- **Handback path** (Conversation `c84cf0d6-…`):
+  - "Quero falar com um atendente humano…" (trace `e7cc32abeb654927968fd08c1d43d477`) → `human`, `agent` `escalator`, `mode` `waiting_human`, PT transfer message.
+  - A Message while waiting was queued with `answer ""` (`19bad24479994a7587d636bb22e0c0e5`).
+  - Queue showed the brief fields. The claim by `operador1` rewrote the brief with the new R$ 250 detail.
+  - `operador2` reply → 403 `not_claimer`.
+  - The Operator reply showed up in `turns?after=11` with `mode` `human`. Handback stored the fixed bilingual Turn and set `mode` `bot`.
+  - The follow-up "Então quando exatamente esse dinheiro cai…" (`5cfbc890419f421caa1289e41e85c6f0`) → `support`, answered in context (11/12/2026). Its answer Judge Score was 0.0, so it got a Review flag and appeared in `GET /operator/review`.
+- **Close path** (Conversation `b99313e3-…`):
+  - EN chargeback (`aa73ce282ad54c5e9ef399346bd3eec9`) → `support`, steps `router, support, escalate_to_human, escalator`.
+  - `operador2` closed it from `waiting_human` without a claim.
+  - Fixed close Turn stored; the next `/chat` → 409 `conversation_closed` (`11b2f7dfdf354153a3ac3f09ecd660e7`).
+- Anonymous "I want to talk to a human agent" (`875efbe4d9b0419f8a9605019a01dd57`) → `human`, `agent` `router`, login reply, nothing stored.
+- Audit rows: claim, reply (`used_suggestion` 0), handback, close; no content. No brief field in the container logs.
+- Found and fixed:
+  - The EN brief's `suggested_reply` was in Portuguese. Fixed, re-checked live (`db774c81271841ffb1684b1d3304f639`).
+  - The transfer message said "Operator" to the Merchant. Fixed.
+
+#### Live smoke and eval re-run (ticket 07)
+
+- `scripts/scenarios.py` before the escalation-rule fix: routing 22/22, facts 8/13. Customer Support escalated Mixed questions 14, 15 and 16 (and Knowledge escalated 9) instead of answering, throwing away the account facts. After the fix (`2674b61`): routing 22/22, facts 10/13. The remaining misses are the known Get Clássica "4G" (1, 18) and crediário (9, still escalated on a retrieval miss).
+- A first eval run on the old prompt was stopped early to save tokens; the smoke run already showed the problem.
+- `uv run python -m scripts.eval` on `2674b61`, 16:23–16:37. `dirty: true` because the README was edited mid-run (no code changed). Results are in `evals/results/20261112T192355Z.json`; the baseline was not replaced.
+  - 3 runs × 22 scenarios = 66 runs, 0 errors. The dataset hash differs from the baseline (3 takeover scenarios), so the deltas are not like-for-like.
+  - Overall: routing 100% (+0pp), facts 92% (+10pp), answer 0.54 (+0.10), coverage 0.84 (+0.03), route 0.94 (+0.03).
+  - Takeover scenarios routing 9/9:
+    - PT request for a person: answer 1.0, coverage 1.0.
+    - Chargeback: answer 0.80–0.90; coverage 0.3–0.4, because the transfer message doesn't answer the question (known limitation).
+    - Anonymous request: answer 1.0, coverage 1.0.
+  - The specialists escalated only the chargeback, 3/3; no unwanted escalations.
+  - Mixed questions 12/66 = 18%, incomplete 9/12 = 75%. Verdict still **build multi-intent Router**; coverage Judge agreed 12/12 with the labelled Mixed scenarios.
+  - recall@4 12/14 = 86%, same misses. Tokens 225,604 in total, mean 3,418 per run (+279).
+- No regression from `human-takeover`. B4 done.
+
+Open:
+- `used_suggestion` is reported by the client.
+- The suggested reply sometimes reads like a transfer note.
+- Knowledge escalates on retrieval misses.
+- Ruff isn't a dev dependency, and `main` has 28 errors.
+
