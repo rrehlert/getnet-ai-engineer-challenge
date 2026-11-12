@@ -56,14 +56,19 @@ def conversation_messages(state: GraphState) -> list[BaseMessage]:
 
 ESCALATE_TOOL = "escalate_to_human"
 
-ESCALATION_RULE = """Escalate with escalate_to_human(reason) instead of answering when:
-- the Merchant is still stuck after your best answer (they say it didn't work, or repeat the problem);
-- your tools or data don't cover the case (e.g. chargeback disputes, contract or registration
-  changes, refunds, blocked accounts);
+ESCALATION_RULE = """Answer first. Escalation is a last resort: call escalate_to_human(reason) only when
+you can't give the Merchant a useful answer at all:
+- they ask for an action that only a person can take and your tools or data don't cover
+  (e.g. disputing a chargeback, contract or registration changes, refunds, unblocking an account);
+- they are still stuck after your best answer in this Conversation (they say it didn't work,
+  or repeat the problem);
 - the case needs a human decision (exceptions, complaints, anything you may not promise).
-The reason is a short note for the Operator (the Getnet staff member who takes over), in English: what the Merchant needs and why
-you can't resolve it. Don't escalate a question you can answer, and never tell the Merchant
-you can't help when escalating would."""
+Never escalate a question you can answer, even in part: if your tools or the Corpus answer
+some of it, answer that part and say plainly what you couldn't find. A detail missing from the
+Corpus is not a reason to escalate. Escalating discards your answer.
+The reason is a short note for the Operator (the Getnet staff member who takes over), in English:
+what the Merchant needs and why you can't resolve it. Never tell the Merchant you can't help when
+escalating would."""
 
 
 @tool(ESCALATE_TOOL)
