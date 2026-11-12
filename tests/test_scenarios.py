@@ -8,6 +8,7 @@ from scripts.scenarios import (
     INTENTS,
     DatasetError,
     Scenario,
+    auth_headers,
     brl,
     check_reply,
     load_scenarios,
@@ -117,6 +118,8 @@ def test_brl_fact_expands_to_spellings():
         ({"message": "m", "user_id": "u", "intent": "support", "facts": [[]]}, "fact"),
         ({"message": "m", "user_id": "u", "intent": "support", "facts": [[""]]}, "fact"),
         ({"message": "", "user_id": "u", "intent": "support"}, "message"),
+        ({"message": "m", "intent": "support"}, "user_id"),
+        ({"message": "m", "user_id": "", "intent": "support"}, "user_id"),
     ],
 )
 def test_invalid_scenarios_are_rejected_naming_the_scenario(raw, needle, tmp_path):
@@ -133,3 +136,41 @@ def test_mixed_question_routed_to_any_needed_intent_passes_routing():
 
     assert check_reply({"intent": "knowledge", "answer": ""}, scenario).routing_ok is True
     assert check_reply({"intent": "unsupported", "answer": ""}, scenario).routing_ok is False
+
+
+# Anonymous scenarios (`"user_id": null`): sent without a token
+
+
+def test_null_user_id_is_an_anonymous_scenario():
+    raw = {"message": "m", "user_id": None, "intent": "knowledge"}
+
+    assert parse_scenario(raw, "s").user_id is None
+
+
+def test_dataset_has_anonymous_product_and_account_scenarios():
+    from app.graph import LOGIN_REPLY
+
+    anonymous = [s for s in load_scenarios() if s.user_id is None]
+
+    assert {s.intent for s in anonymous} == {"knowledge", "support"}
+    [account] = [s for s in anonymous if s.intent == "support"]
+    assert account.facts
+    assert check_reply({"intent": "support", "answer": LOGIN_REPLY}, account).facts_ok is True
+    assert check_reply({"intent": "support", "answer": "R$ 1.817,26 today."}, account).facts_ok is False
+
+
+def test_anonymous_scenarios_send_no_token_and_merchants_log_in_once():
+    logins = []
+
+    def login(user_id):
+        logins.append(user_id)
+        return f"token-{user_id}"
+
+    tokens: dict[str, str] = {}
+    anonymous = Scenario("m", None, "knowledge")
+    merchant = Scenario("m", "cliente1988", "support")
+
+    assert auth_headers(anonymous, tokens, login) == {}
+    assert auth_headers(merchant, tokens, login) == {"Authorization": "Bearer token-cliente1988"}
+    assert auth_headers(merchant, tokens, login) == {"Authorization": "Bearer token-cliente1988"}
+    assert logins == ["cliente1988"]

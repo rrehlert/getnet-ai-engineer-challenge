@@ -155,7 +155,11 @@ def make_support(model: BaseChatModel, today: Callable[[], date] = date.today) -
     without_tools = agent([])
 
     def support(state: GraphState) -> dict:
-        ctx = SupportContext(user_id=state["user_id"], today=today())
+        user_id = state["user_id"]
+        if user_id is None:
+            # The graph sends anonymous visitors to the login reply; never read an account without one.
+            raise ValueError("Customer Support Agent needs a Merchant")
+        ctx = SupportContext(user_id=user_id, today=today())
         known = ctx.user_id in load_merchants(ctx.today)
         runner = with_tools if known else without_tools
         out = runner.invoke({"messages": [HumanMessage(state["message"])]}, context=ctx)

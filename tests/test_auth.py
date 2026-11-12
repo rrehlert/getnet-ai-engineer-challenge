@@ -105,16 +105,15 @@ def forged(claims, secret=SECRET):
 @pytest.mark.parametrize(
     "headers",
     [
-        {},
         bearer(forged({"sub": "cliente1988", "role": "merchant", "exp": int(NOW.timestamp()) + 60}, "another-secret-also-32-bytes-long!")),
         bearer(forged({"sub": "cliente1988", "role": "admin", "exp": int(NOW.timestamp()) + 60})),
         bearer(forged({"sub": "cliente1988", "role": "merchant"})),
         bearer("not-a-jwt"),
         {"Authorization": "Basic Y2xpZW50ZTE5ODg6eA=="},
     ],
-    ids=["missing", "bad-signature", "bad-role", "no-exp", "garbage", "not-bearer"],
+    ids=["bad-signature", "bad-role", "no-exp", "garbage", "not-bearer"],
 )
-def test_chat_without_a_valid_token_is_401_and_never_runs_the_graph(headers):
+def test_chat_with_an_invalid_token_is_401_never_anonymous_and_never_runs_the_graph(headers):
     graph = CapturingGraph()
     client = TestClient(make_app(graph=graph))
 
@@ -122,7 +121,7 @@ def test_chat_without_a_valid_token_is_401_and_never_runs_the_graph(headers):
 
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == "Bearer"
-    assert response.json()["error"]["code"] in {"unauthorized", "invalid_token"}
+    assert response.json()["error"]["code"] == "invalid_token"
     assert graph.states == []
 
 

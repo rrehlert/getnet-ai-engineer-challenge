@@ -205,7 +205,7 @@ def _run_once(graph: Any, judge_model: Any, privacy: LogPrivacy, index: int, run
     }
     started = time.perf_counter()
     try:
-        # Logged-in scenarios: the Merchant goes straight into graph state, no HTTP.
+        # The Merchant (None: anonymous visitor) goes straight into graph state, no HTTP or token.
         result = graph.invoke({"message": scenario.message, "user_id": scenario.user_id})
     except Exception as exc:
         record["error"] = provider_error_code(exc) if is_provider_error(exc) else f"error: {exc!r}"

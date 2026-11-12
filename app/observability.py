@@ -9,14 +9,16 @@ import sys
 from dataclasses import dataclass
 from typing import get_args
 
-from app.graph import Agent, Intent, agent_for
+from app.graph import LOGIN_STEP, Agent, Intent, agent_for
 from app.redact import redact, redact_value
 from app.settings import MessageMode, Settings
 
 log = logging.getLogger("app.events")
 
 AGENTS = set(get_args(Agent))
+NOT_TOOLS = AGENTS | {LOGIN_STEP}
 MESSAGE_LIMIT = 500
+ANONYMOUS = "anonymous"  # `user_ref` of a visitor without a token
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ def log_request(
     *,
     privacy: LogPrivacy,
     trace_id: str,
-    user_id: str,
+    user_id: str | None,
     message: str,
     latency_ms: int,
     outcome: str,
@@ -77,10 +79,10 @@ def log_request(
         "request",
         unredacted=privacy.text_fields(message=message),
         trace_id=trace_id,
-        user_ref=privacy.user_ref(user_id),
+        user_ref=ANONYMOUS if user_id is None else privacy.user_ref(user_id),
         intent=intent,
-        agent=None if intent is None else agent_for(intent),
-        tools=[s for s in result.get("steps", []) if s not in AGENTS],
+        agent=None if intent is None else agent_for(intent, anonymous=user_id is None),
+        tools=[s for s in result.get("steps", []) if s not in NOT_TOOLS],
         tokens=result.get("tokens", 0),
         latency_ms=latency_ms,
         outcome=outcome,

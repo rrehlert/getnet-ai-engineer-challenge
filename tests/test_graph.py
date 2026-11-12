@@ -79,3 +79,19 @@ def test_specialist_empty_answer_gets_a_fixed_bilingual_fallback():
         assert result["steps"] == ["router", "support"]
         assert result["tokens"] == 5
     assert "reformule" in EMPTY_ANSWER_FALLBACK and "rephrase" in EMPTY_ANSWER_FALLBACK
+
+
+def test_anonymous_support_gets_the_login_reply_without_the_support_agent():
+    from app.graph import LOGIN_REPLY
+
+    result = run(fake_route("support"), user_id=None)
+
+    assert result["answer"] == LOGIN_REPLY
+    assert result["steps"] == ["router", "login"]
+    assert result.get("tokens", 0) == 0
+
+
+def test_anonymous_knowledge_still_goes_to_knowledge_agent():
+    result = run(fake_route("knowledge"), user_id=None)
+
+    assert result["steps"] == ["router", "knowledge", "knowledge_tool"]

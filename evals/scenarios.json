@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by scripts/scenarios.py (live smoke) and scripts/eval.py (in-process eval). Each fact is a list of accepted alternatives; {\"brl\": \"1817.26\"} expands to its pt-BR/en spellings. Support facts come from data/merchants.json (cliente1988); Knowledge facts only where stable on the Corpus. Refusals and web-search scenarios declare none. Mixed questions list intents_needed; their intent is the part today's single-intent Router should pick.",
+  "_comment": "Shared by scripts/scenarios.py (live smoke) and scripts/eval.py (in-process eval). Each fact is a list of accepted alternatives; {\"brl\": \"1817.26\"} expands to its pt-BR/en spellings. Support facts come from data/merchants.json (cliente1988); Knowledge facts only where stable on the Corpus. Refusals and web-search scenarios declare none. Mixed questions list intents_needed; their intent is the part today's single-intent Router should pick. \"user_id\": null is an anonymous visitor (no token): products answered, account questions get the fixed login reply (facts check it).",
   "scenarios": [
     {"message": "What's the difference between the Get Clássica and the Get Smart?", "user_id": "cliente1988", "intent": "knowledge", "facts": [["4G"]]},
     {"message": "What's the weather forecast in Porto Alegre tomorrow?", "user_id": "cliente1988", "intent": "knowledge"},
@@ -32,6 +32,10 @@
      "facts": [["insufficient funds", "saldo insuficiente"], {"brl": "24.80"}]},
     {"message": "Quanto vou receber hoje das vendas de ontem no débito e no Pix, e qual a taxa do Pix na Getnet?", "user_id": "cliente1988", "intent": "support",
      "intents_needed": ["support", "knowledge"],
-     "facts": [{"brl": "1817.26"}, {"brl": "955.20"}]}
+     "facts": [{"brl": "1817.26"}, {"brl": "955.20"}]},
+    {"message": "I'm not a Getnet customer yet: what's the difference between the Get Clássica and the Get Smart?", "user_id": null, "intent": "knowledge",
+     "facts": [["4G"]]},
+    {"message": "Quanto vou receber hoje das minhas vendas?", "user_id": null, "intent": "support",
+     "facts": [["faça login"], ["log in"]]}
   ]
 }

@@ -77,6 +77,13 @@ ANSWER_RUBRICS = {
     "(Getnet products/fees and the Merchant's own account).",
 }
 
+# An anonymous visitor's account question gets the fixed login reply, not account data.
+ANONYMOUS_SUPPORT_RUBRIC = (
+    "The visitor is not logged in, so the reply must give no account data and ask them to log in "
+    "to see their account, offering help with Getnet products meanwhile."
+)
+ANONYMOUS_MERCHANT = "none (a visitor who is not logged in; account questions are still `support`)"
+
 ANSWER_PROMPT = """You judge a reply from Getnet merchant support.
 Evidence is the tool output the Agent actually saw while answering. A claim that the
 Evidence does not support counts against the reply, however plausible it sounds.
@@ -110,14 +117,18 @@ def format_evidence(evidence: Sequence[Evidence]) -> str:
     return text[:EVIDENCE_CAP] + f"\n[Evidence truncated: {len(text) - EVIDENCE_CAP} more characters cut]"
 
 
-def _route_input(message: str, intent: Intent, user_id: str = "", **_) -> list[tuple[str, str]]:
-    return [("system", ROUTE_PROMPT), ("human", f"Merchant: {user_id}\nMessage: {message}\nIntent: {intent}")]
+def _route_input(message: str, intent: Intent, user_id: str | None = "", **_) -> list[tuple[str, str]]:
+    merchant = ANONYMOUS_MERCHANT if user_id is None else user_id
+    return [("system", ROUTE_PROMPT), ("human", f"Merchant: {merchant}\nMessage: {message}\nIntent: {intent}")]
 
 
 def _answer_input(
-    message: str, intent: Intent, answer: str, sources: list, evidence: Sequence[Evidence], **_
+    message: str, intent: Intent, answer: str, sources: list, evidence: Sequence[Evidence], user_id: str | None = "", **_
 ) -> list[tuple[str, str]]:
-    rubric = ANSWER_RUBRICS.get(intent, ANSWER_RUBRICS["knowledge"])
+    if user_id is None and intent == "support":
+        rubric = ANONYMOUS_SUPPORT_RUBRIC
+    else:
+        rubric = ANSWER_RUBRICS.get(intent, ANSWER_RUBRICS["knowledge"])
     human = (
         f"Message: {message}\nIntent: {intent}\nReply: {answer}\n"
         f"Sources: {json.dumps(sources, ensure_ascii=False)}\n"
@@ -148,9 +159,11 @@ def run_judges(
     answer: str,
     sources: list,
     evidence: Sequence[Evidence],
-    user_id: str = "",
+    user_id: str | None = "",
 ) -> dict[str, Verdict]:
     """Run every Judge Type, log one line each, and return the verdicts by Judge Type.
+
+    `user_id` None means an anonymous visitor (not logged in).
 
     A Judge that fails is logged as an error and left out of the result.
     """

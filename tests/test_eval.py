@@ -302,6 +302,32 @@ def test_logged_in_scenarios_pass_user_id_into_graph_state(tmp_path):
     assert results["runs"][1]["answer"] == "Terminal of cliente2024 is offline."
 
 
+def test_anonymous_scenarios_run_without_a_merchant(tmp_path):
+    from app.graph import LOGIN_REPLY
+
+    path = tmp_path / "scenarios.json"
+    path.write_text(json.dumps({"scenarios": [
+        {"message": "When is my deposit?", "user_id": None, "intent": "support", "facts": [["faça login"], ["log in"]]},
+        {"message": "What is Get Smart?", "user_id": None, "intent": "knowledge"},
+    ]}))
+    seen = []
+
+    def spy_support(state):
+        seen.append(state)
+        return support(state)
+
+    results = json.loads(run_eval(
+        path, graph=build_graph(router, knowledge, spy_support), judge_model=judge_model(), runs=1,
+        out_dir=tmp_path / "results", reply_model="r", judge_model_name="j", now=NOW,
+    ).read_text())
+
+    account, product = results["runs"]
+    assert account["answer"] == LOGIN_REPLY
+    assert account["routing_ok"] is True and account["facts_ok"] is True
+    assert product["answer"] == "Get Smart has a touchscreen."
+    assert seen == []
+
+
 def test_eval_runs_respected(tmp_path):
     _, results = run_eval_with(tmp_path, runs=3)
 

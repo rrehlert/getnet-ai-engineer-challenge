@@ -3,7 +3,8 @@
 Usage: uv run python scripts/scenarios.py [BASE_URL]
 BASE_URL defaults to $API_BASE_URL, then http://localhost:8000.
 Logs in as each scenario's user id via `POST /dev/login` (needs `DEMO_LOGIN=true`, as in compose)
-and sends the token; the Merchant comes only from the token.
+and sends the token; the Merchant comes only from the token. Anonymous scenarios
+(`"user_id": null`) are sent without a token.
 Prints intent, agent, answer and Sources per scenario, then routing accuracy (Intent) and
 fact accuracy (expected facts in the reply) as separate totals, listing missing facts.
 Exits non-zero if either is below 100%.
@@ -14,6 +15,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,7 +25,7 @@ Fact = list[str]  # accepted alternatives; the fact passes if any appears in the
 @dataclass(frozen=True)
 class Scenario:
     message: str
-    user_id: str
+    user_id: str | None  # None: an anonymous visitor, sent without a token
     intent: str
     facts: list[Fact] = field(default_factory=list)
     intents_needed: list[str] = field(default_factory=list)  # Mixed question: ≥2 Intents
@@ -76,8 +78,8 @@ def parse_scenario(raw: dict, where: str) -> Scenario:
     if not isinstance(message, str) or not message:
         raise DatasetError(f"{where}: missing message")
     where = f"{where} ({message!r})"
-    if not isinstance(user_id, str) or not user_id:
-        raise DatasetError(f"{where}: missing user_id")
+    if "user_id" not in raw or (user_id is not None and (not isinstance(user_id, str) or not user_id)):
+        raise DatasetError(f"{where}: missing user_id (use null for an anonymous visitor)")
     if intent not in INTENTS:
         raise DatasetError(f"{where}: intent must be one of {sorted(INTENTS)}, got {intent!r}")
     needed = raw.get("intents_needed", [])
@@ -119,8 +121,17 @@ def login(base_url: str, user_id: str) -> str:
     return body["access_token"]
 
 
-def post_chat(base_url: str, message: str, token: str) -> tuple[int, dict]:
-    return _post(f"{base_url.rstrip('/')}/chat", {"message": message}, {"Authorization": f"Bearer {token}"})
+def auth_headers(scenario: Scenario, tokens: dict[str, str], login: Callable[[str], str]) -> dict[str, str]:
+    """No token for an anonymous scenario; otherwise one `login` per Merchant, cached in `tokens` (they last an hour)."""
+    if scenario.user_id is None:
+        return {}
+    if scenario.user_id not in tokens:
+        tokens[scenario.user_id] = login(scenario.user_id)
+    return {"Authorization": f"Bearer {tokens[scenario.user_id]}"}
+
+
+def post_chat(base_url: str, message: str, headers: dict[str, str]) -> tuple[int, dict]:
+    return _post(f"{base_url.rstrip('/')}/chat", {"message": message}, headers)
 
 
 def format_fact(fact: Fact) -> str:
@@ -134,13 +145,12 @@ def main() -> int:
     scenarios = load_scenarios()
     tokens: dict[str, str] = {}
     for i, scenario in enumerate(scenarios, 1):
-        if scenario.user_id not in tokens:  # tokens last an hour: one login per Merchant per run
-            try:
-                tokens[scenario.user_id] = login(base_url, scenario.user_id)
-            except LoginError as exc:
-                print(exc, file=sys.stderr)
-                return 2
-        status, body = post_chat(base_url, scenario.message, tokens[scenario.user_id])
+        try:
+            headers = auth_headers(scenario, tokens, lambda user_id: login(base_url, user_id))
+        except LoginError as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        status, body = post_chat(base_url, scenario.message, headers)
         result = check_reply(body, scenario)
         routing_passed += result.routing_ok
         if result.facts_ok is not None:
@@ -149,7 +159,7 @@ def main() -> int:
         if result.missing_facts:
             missing_by_scenario.append((i, result.missing_facts))
         facts_mark = {True: "✓", False: "✗", None: "-"}[result.facts_ok]
-        print(f"routing {'✓' if result.routing_ok else '✗'} facts {facts_mark} [{i}] ({scenario.user_id}) {scenario.message}")
+        print(f"routing {'✓' if result.routing_ok else '✗'} facts {facts_mark} [{i}] ({scenario.user_id or 'anonymous'}) {scenario.message}")
         print(f"    HTTP {status} · intent={body.get('intent')} (expected {scenario.intent}) · agent={body.get('agent')}")
         print(f"    steps: {body.get('steps')} · trace_id: {body.get('trace_id')}")
         print(f"    answer: {body.get('answer') or body.get('error')}")
