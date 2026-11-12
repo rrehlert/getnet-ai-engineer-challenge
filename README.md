@@ -597,7 +597,7 @@ The README (`11`, `12`) and the video came after the timebox.
 - ~~**Semantic quality:** Judge Scores existed only as single log lines, with no aggregate, baseline or repeated runs.~~ **Closed** in the improvement run by the [eval runner](#eval-runner): aggregate Judge Scores per Intent, a committed baseline with deltas, the `coverage` Judge and recall@4.
 - **Multi-intent Router:** the baseline meets the agreed threshold (24% Mixed questions, 92% of them incomplete), so a Router that can hand one Message to both specialists is justified but not built yet.
 - **Chroma:** old hash-named collections are never pruned.
-- **Lint:** ruff isn't a project dependency (run it with `uvx ruff check`), and with its default rules the code has 28 findings that predate the improvement run.
+- **Lint:** ruff isn't a project dependency (run it with `uvx ruff check`), and with its default rules the code has 28 findings, all already on `main` before the human takeover.
 - **Conversations:** the Agents see only the last 10 Turns (no summary of older ones); whether real models resolve follow-ups well is checked live, not by the eval runner (its scenarios are single Messages with empty history).
 - **Out of scope:** real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
 - ~~**Human Escalation Agent (designed, not built).**~~ **Built** in the improvement run: the [Escalator Agent and human takeover](#human-takeover). Not built: an Operator UI (curl only), push delivery (the Merchant polls), routing to Operators by skill, SLAs and notifications, approval-style HITL.
