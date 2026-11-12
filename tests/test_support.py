@@ -93,18 +93,17 @@ def test_yesterdays_settlements_with_dated_prompt_and_profile():
     assert '"net_amount": 1817.26, "expected_date": "2026-10-30", "status": "scheduled"' in out.content
 
 
-def test_unknown_merchant_cannot_call_tools():
-    # Even if the model tries, no tool is offered or executed.
-    model = scripted(call("get_settlement_schedule"), final("Account not found."))
+def test_unknown_merchant_cannot_call_account_tools():
+    # Even if the model tries, no account tool is offered or executed; escalate_to_human is its only tool.
+    model = scripted(call("get_settlement_schedule"), final("Account cliente9999 not found."))
     support = make_support(model, today=lambda: TODAY)
 
     update = support({"message": "Quando cai o dinheiro?", "user_id": "cliente9999"})
 
-    assert update["steps"] == ["support"]
     assert update["evidence"] == []
-    assert "cliente9999" in update["answer"]
-    assert model.bound == []
-    assert not tool_outputs(model)
+    assert update["answer"] == "Account cliente9999 not found."
+    assert model.bound == ["escalate_to_human"]
+    assert all(m.status == "error" for m in tool_outputs(model))
     prompt = model.seen[0][0].content
     assert "wasn't found" in prompt
     assert "cliente9999" in prompt
