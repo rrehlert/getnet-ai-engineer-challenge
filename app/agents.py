@@ -1,9 +1,12 @@
 """Pieces shared by the Agents: the language rule in their prompts, the chat
-messages for a Message and its history, and the `steps` / `tokens` / `evidence`
-summary of a tool-calling agent's run."""
+messages for a Message and its history, the `steps` / `tokens` / `evidence`
+summary of a tool-calling agent's run, and the specialists' `escalate_to_human` tool."""
 
 from collections.abc import Sequence
+from typing import Any
 
+from langchain.agents.middleware import AgentState, after_model
+from langchain.tools import tool
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from app.graph import GraphState
@@ -16,14 +19,16 @@ LANGUAGE_RULE = (
 
 def run_summary(agent: str, messages: Sequence[BaseMessage]) -> dict:
     """`steps`: the agent, then each tool it called; `tokens`: total over its model calls;
-    `evidence`: each tool output it saw, in order (calls refused by a tool limit excluded)."""
+    `evidence`: each tool output it saw, in order (calls refused by a tool limit excluded).
+    A run that ended on `escalate_to_human` lists that tool last in `steps`."""
+    escalated = [ESCALATE_TOOL] if escalation(messages) else []
     return {
         "evidence": [
             {"tool": m.name, "content": m.text}
             for m in messages
             if isinstance(m, ToolMessage) and m.status != "error"
         ],
-        "steps": [agent] + [m.name for m in messages if isinstance(m, ToolMessage)],
+        "steps": [agent] + [m.name for m in messages if isinstance(m, ToolMessage)] + escalated,
         "tokens": sum(
             (m.usage_metadata or {}).get("total_tokens", 0) for m in messages if isinstance(m, AIMessage)
         ),
@@ -41,3 +46,46 @@ def conversation_messages(state: GraphState) -> list[BaseMessage]:
         for t in state.get("history", [])
     ]
     return [*prior, HumanMessage(state["message"])]
+
+
+ESCALATE_TOOL = "escalate_to_human"
+
+ESCALATION_RULE = """Escalate with escalate_to_human(reason) instead of answering when:
+- the Merchant is still stuck after your best answer (they say it didn't work, or repeat the problem);
+- your tools or data don't cover the case (e.g. chargeback disputes, contract or registration
+  changes, refunds, blocked accounts);
+- the case needs a human decision (exceptions, complaints, anything you may not promise).
+The reason is a short note for the human agent, in English: what the Merchant needs and why
+you can't resolve it. Don't escalate a question you can answer, and never tell the Merchant
+you can't help when escalating would."""
+
+
+@tool(ESCALATE_TOOL)
+def escalate_to_human(reason: str) -> str:
+    """Hand the case to a human agent (Operator) when you can't resolve it. `reason`: what the
+    Merchant needs and why you can't resolve it. The Merchant is told they're being transferred."""
+    # Never executed: `stop_on_escalation` ends the run as soon as the model calls it.
+    return "Escalated to a human agent."
+
+
+@after_model(tools=[escalate_to_human], can_jump_to=["end"])
+def stop_on_escalation(state: AgentState, runtime: Any) -> dict | None:
+    """Adds `escalate_to_human` to the agent and ends its loop the moment the model calls it
+    (other tool calls in the same reply are not run; any draft is discarded)."""
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage) and any(c["name"] == ESCALATE_TOOL for c in last.tool_calls):
+        return {"jump_to": "end"}
+    return None
+
+
+def escalation(messages: Sequence[BaseMessage]) -> dict:
+    """The run's `escalation_reason` (and the step) if it ended on `escalate_to_human`; else `{}`.
+    Put last in the node's update: the draft answer is dropped and the reason is never a Source."""
+    last = messages[-1] if messages else None
+    if not isinstance(last, AIMessage):
+        return {}
+    reasons = [str(c["args"].get("reason") or "").strip() for c in last.tool_calls if c["name"] == ESCALATE_TOOL]
+    if not reasons:
+        return {}
+    # An empty reason still escalates: the model asked for a human.
+    return {"answer": "", "escalation_reason": reasons[0] or "The Agent escalated without a reason."}

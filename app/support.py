@@ -20,7 +20,14 @@ from langchain.agents.middleware import (
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models import BaseChatModel
 
-from app.agents import LANGUAGE_RULE, conversation_messages, run_summary
+from app.agents import (
+    ESCALATION_RULE,
+    LANGUAGE_RULE,
+    conversation_messages,
+    escalation,
+    run_summary,
+    stop_on_escalation,
+)
 from app.graph import GraphState, Node
 
 SUPPORT_TOOL_CALL_LIMIT = 6
@@ -102,15 +109,21 @@ Rules:
   procedures; for troubleshooting, use the hints in the tool data.
 - Write every amount in Brazilian reais, e.g. R$ 1.817,26.
 - Reply in the same language as the Merchant's Message, even when tool data is in
-  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical."""
+  Portuguese. """ + LANGUAGE_RULE + """ Be concise and practical.
+
+""" + ESCALATION_RULE
 
 UNKNOWN_PROMPT = """You are the Customer Support Agent of Getnet's support assistant for merchants.
 Today is {today} ({weekday}).
 
 No Getnet account was found for user id `{user_id}`, so you have no account data
-and no tools. Tell the Merchant, in the same language as their Message, that the
-account wasn't found and that they should check their user id or contact Getnet
-support. Do not guess or invent any account data."""
+and no account tools. Tell the Merchant, in the same language as their Message, that the
+account wasn't found and that they should check their user id. Do not guess or invent
+any account data.
+
+If they need help with their account anyway (they insist the id is right, or the case
+needs a person), escalate: call escalate_to_human(reason) with a short English note,
+e.g. that the account wasn't found and what the Merchant needs. It is your only tool."""
 
 
 NOT_FOUND = (
@@ -145,12 +158,17 @@ def make_support(model: BaseChatModel, today: Callable[[], date] = date.today) -
         return create_agent(
             model,
             tools=tools,
-            middleware=[support_prompt, ToolCallLimitMiddleware(run_limit=SUPPORT_TOOL_CALL_LIMIT, exit_behavior="end")],
+            # stop_on_escalation adds escalate_to_human; last, so its hook runs before the limit's.
+            middleware=[
+                support_prompt,
+                ToolCallLimitMiddleware(run_limit=SUPPORT_TOOL_CALL_LIMIT, exit_behavior="end"),
+                stop_on_escalation,
+            ],
             context_schema=SupportContext,
         )
 
     with_tools = agent(TOOLS)
-    # Unknown Merchant: an agent with no tools at all, so it cannot call any.
+    # Unknown Merchant: no account tools; escalate_to_human (from the middleware) is its only tool.
     without_tools = agent([])
 
     def support(state: GraphState) -> dict:
@@ -164,9 +182,10 @@ def make_support(model: BaseChatModel, today: Callable[[], date] = date.today) -
         out = runner.invoke({"messages": conversation_messages(state)}, context=ctx)
         messages = out["messages"]
         answer = messages[-1].text
-        if not known and not answer.strip():
-            # The model tried a tool call anyway; reply deterministically.
+        escalated = escalation(messages)
+        if not known and not escalated and not answer.strip():
+            # The model tried an unavailable tool anyway; reply deterministically.
             answer = NOT_FOUND.format(user_id=ctx.user_id)
-        return {"answer": answer, "sources": [], **run_summary("support", messages)}
+        return {"answer": answer, "sources": [], **run_summary("support", messages), **escalated}
 
     return support

@@ -152,9 +152,9 @@ def test_operator_token_on_chat_is_403():
 def test_unknown_id_reaches_the_account_not_found_reply():
     from app.graph import build_graph
     from app.support import make_support
-    from tests.test_support import call, scripted
+    from tests.test_support import call, final, scripted
 
-    model = scripted(call("get_settlement_schedule"), call("get_settlement_schedule"))
+    model = scripted(call("get_settlement_schedule"), final(""))
     route = lambda state: {"intent": "support", "steps": ["router"]}  # noqa: E731
     graph = build_graph(route, lambda state: {}, make_support(model))
     client = TestClient(make_app(graph=graph))
@@ -163,7 +163,7 @@ def test_unknown_id_reaches_the_account_not_found_reply():
 
     assert body["agent"] == "support"
     assert "Não encontramos uma conta Getnet para o usuário nobody" in body["answer"]
-    assert model.bound == []
+    assert model.bound == ["escalate_to_human"]  # no account tool
 
 
 def test_me_returns_the_merchant_and_their_fixture_account():
