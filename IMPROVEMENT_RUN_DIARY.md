@@ -40,6 +40,7 @@ Decisions adopted at the start:
 | 1 | 2026-11-10 19:13:42 | 20:45:52 | 1h32m10s | 1h32m10s | `improve-s1-start`, `improve-s1-stop` |
 | 2 | 2026-11-11 19:46:30 | 20:04:49 | 18m19s | 1h50m29s | `improve-s2-start`, `improve-s2-stop` |
 | 3 | 2026-11-11 21:06:46 | 21:58:52 | 52m06s | 2h42m35s | `improve-s3-start`, `improve-s3-stop` |
+| 4 | 2026-11-11 22:22:54 | 23:05:33 | 42m39s | 3h25m14s | `improve-s4-start`, `improve-s4-stop` |
 
 ## Checkpoints
 
