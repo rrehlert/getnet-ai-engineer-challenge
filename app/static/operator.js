@@ -1,4 +1,4 @@
-// Operator view (ticket 03): Queue and Review lists, Conversation detail, claim/reply/handback/close/reviewed.
+// Operator view (ticket 03): Queue, Mine and Review lists, Conversation detail, claim/reply/handback/close/reviewed.
 // Loaded after app.js and uses its helpers (el, api, sourcesNode, errorLine). Registers itself in ROLE_VIEWS.
 // All Turns, brief fields, account data and error messages go in through textContent (via `el`), never as HTML.
 "use strict";
@@ -15,6 +15,25 @@ const OPERATOR_PANELS = [];
   const DETAIL_MS = 2000;
   const AUTHORS = { user: "Merchant", assistant: "Assistant", operator: "Operator" };
   const MODE_LABELS = { bot: "bot", waiting_human: "waiting for human", human: "human", closed: "closed" };
+  const TABS = [
+    { name: "queue", label: "Queue", path: "/operator/queue", empty: "Nobody is waiting for an Operator." },
+    { name: "mine", label: "Mine", path: "/operator/mine", empty: "You have no claimed Conversations." },
+    { name: "review", label: "Review", path: "/operator/review", empty: "No Conversations flagged for Review." },
+  ];
+  const PICK = "Pick a Conversation from the Queue, Mine or the Review list.";
+
+  // The open Conversation's id survives a reload (forgotten on logout, or when it 404s).
+  const OPEN_KEY = "demo.operator.open";
+  const openStore = {
+    get() { try { return localStorage.getItem(OPEN_KEY); } catch { return null; } },
+    set(id) { try { localStorage.setItem(OPEN_KEY, id); } catch { /* private mode: not remembered */ } },
+    clear() { try { localStorage.removeItem(OPEN_KEY); } catch { /* ignore */ } },
+  };
+  // Scripts are deferred, so the page (and its Logout button) exists by DOMContentLoaded.
+  document.addEventListener("DOMContentLoaded", () => {
+    const logout = document.getElementById("logout");
+    if (logout) logout.addEventListener("click", () => openStore.clear());
+  });
 
   function age(iso) {
     const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -125,7 +144,7 @@ const OPERATOR_PANELS = [];
   function operatorView(container, claims) {
     const me = claims.sub;
     let tab = "queue";
-    let lists = { queue: null, review: null };
+    let lists = { queue: null, mine: null, review: null };
     let openId = null;
     let detail = null;
     let panels = [];
@@ -136,16 +155,16 @@ const OPERATOR_PANELS = [];
     const draft = { prefilled: null, touched: false };
 
     // Left: tabs + list.
-    const queueTab = el("button", { type: "button", class: "op-tab", onclick: () => switchTab("queue") }, "Queue");
-    const reviewTab = el("button", { type: "button", class: "op-tab", onclick: () => switchTab("review") }, "Review");
+    const tabButtons = Object.fromEntries(TABS.map((t) => [t.name,
+      el("button", { type: "button", class: "op-tab", onclick: () => switchTab(t.name) }, t.label)]));
     const listBody = el("div", { class: "op-list" }, el("p", { class: "muted" }, "Loading…"));
     const listError = el("div", { class: "error", role: "alert" });
     const listCard = el("section", { class: "card op-lists" },
-      el("div", { class: "op-tabs", role: "tablist" }, queueTab, reviewTab), listError, listBody);
+      el("div", { class: "op-tabs", role: "tablist" }, Object.values(tabButtons)), listError, listBody);
 
     // Right: detail, built once per opened Conversation and updated in place.
     const detailCard = el("section", { class: "card op-detail" },
-      el("p", { class: "muted" }, "Pick a Conversation from the Queue or the Review list."));
+      el("p", { class: "muted" }, PICK));
 
     container.append(el("div", { class: "op-layout" }, listCard, detailCard));
 
@@ -158,9 +177,9 @@ const OPERATOR_PANELS = [];
 
     async function loadLists() {
       try {
-        const [queue, review] = await Promise.all([api("/operator/queue"), api("/operator/review")]);
+        const results = await Promise.all(TABS.map((t) => api(t.path)));
         if (stopped) return;
-        lists = { queue: queue.conversations, review: review.conversations };
+        lists = Object.fromEntries(TABS.map((t, i) => [t.name, results[i].conversations]));
         listError.textContent = "";
         renderList();
       } catch (err) {
@@ -170,27 +189,27 @@ const OPERATOR_PANELS = [];
     }
 
     function renderList() {
-      queueTab.textContent = "Queue" + (lists.queue ? " (" + lists.queue.length + ")" : "");
-      reviewTab.textContent = "Review" + (lists.review ? " (" + lists.review.length + ")" : "");
-      queueTab.classList.toggle("active", tab === "queue");
-      reviewTab.classList.toggle("active", tab === "review");
-      queueTab.setAttribute("aria-selected", String(tab === "queue"));
-      reviewTab.setAttribute("aria-selected", String(tab === "review"));
+      for (const t of TABS) {
+        const button = tabButtons[t.name];
+        button.textContent = t.label + (lists[t.name] ? " (" + lists[t.name].length + ")" : "");
+        button.classList.toggle("active", tab === t.name);
+        button.setAttribute("aria-selected", String(tab === t.name));
+      }
       const items = lists[tab];
       if (!items) return;
       if (!items.length) {
-        listBody.replaceChildren(el("p", { class: "muted" },
-          tab === "queue" ? "Nobody is waiting for an Operator." : "No Conversations flagged for Review."));
+        listBody.replaceChildren(el("p", { class: "muted" }, TABS.find((t) => t.name === tab).empty));
         return;
       }
       listBody.replaceChildren(el("ul", { class: "op-items" }, items.map((item) => {
         const selected = item.conversation_id === openId;
-        const lines = tab === "queue"
+        const lines = tab !== "review"
           ? [
             el("div", { class: "op-item-head" },
               el("span", { class: "badge op-priority op-priority-" + item.priority }, item.priority),
               el("span", { class: "op-item-category" }, item.category),
-              el("span", { class: "muted op-age" }, age(item.created_at))),
+              el("span", { class: "muted op-age" },
+                tab === "mine" ? "claimed " + age(item.claimed_at) + " ago" : age(item.created_at))),
             el("div", { class: "op-item-ask" }, item.customer_ask),
           ]
           : [
@@ -209,6 +228,16 @@ const OPERATOR_PANELS = [];
     // ---------- detail ----------
 
     let parts = null;  // the open Conversation's DOM pieces
+    let restoring = null;  // the id reopened from storage on load, until its first detail answer
+
+    function forgetOpen() {
+      stopPanels();
+      openId = null;
+      detail = null;
+      parts = null;
+      detailCard.replaceChildren(el("p", { class: "muted" }, PICK));
+      renderList();
+    }
 
     function buildDetail(id) {
       const textarea = el("textarea", { rows: 4, "aria-label": "Reply to the Merchant" });
@@ -324,10 +353,18 @@ const OPERATOR_PANELS = [];
       try {
         const data = await api("/operator/conversations/" + encodeURIComponent(id));
         if (stopped || id !== openId) return;
+        if (restoring === id) restoring = null;
         detail = data;
         renderDetail();
       } catch (err) {
         if (stopped || id !== openId || err.code === "session_expired") return;
+        if (err.status === 404 && restoring === id) {
+          // The remembered Conversation is gone (purged, or not visible): forget it without a word.
+          restoring = null;
+          openStore.clear();
+          forgetOpen();
+          return;
+        }
         parts.actionError.textContent = err.status === 404
           ? "This Conversation is no longer visible to Operators."
           : err.message;
@@ -343,6 +380,7 @@ const OPERATOR_PANELS = [];
       if (id === openId) return;
       stopPanels();
       openId = id;
+      openStore.set(id);
       detail = null;
       draft.prefilled = null;
       draft.touched = false;
@@ -364,6 +402,7 @@ const OPERATOR_PANELS = [];
         if (stopped || id !== openId) return true;
         detail = data;
         renderDetail();
+        if (action === "claim") switchTab("mine");
         return true;
       } catch (err) {
         if (stopped || id !== openId || err.code === "session_expired") return false;
@@ -402,6 +441,11 @@ const OPERATOR_PANELS = [];
     document.addEventListener("visibilitychange", onVisibility);
     renderList();
     loadLists();
+    const remembered = openStore.get();
+    if (remembered) {
+      restoring = remembered;
+      openConversation(remembered);
+    }
 
     return () => {
       stopped = true;
