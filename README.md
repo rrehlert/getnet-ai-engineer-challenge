@@ -15,7 +15,7 @@ cp .env.example .env        # set OPENAI_API_KEY (an OpenRouter key by default)
 docker compose up --build   # builds the image, builds the RAG index at startup, serves on :8000
 ```
 
-The container runs as a non-root user (`app`, uid 10001). The index lives on the named volume `chroma`, so recreating the container reuses it; it is rebuilt only when the Corpus, embedding model or chunking settings change. `docker compose down -v` deletes it.
+The container runs as a non-root user (`app`, uid 10001). All state lives on one named volume, `state` (mounted at `/app/state`): the Corpus index (`chroma/`) and the Conversations database (`conversations.db`). Recreating or restarting the container reuses both; the index is rebuilt only when the Corpus, embedding model or chunking settings change. `docker compose down -v` deletes both.
 
 `/health` returns `{"status":"ok"}` once the index is ready. Until then it returns 503 `{"status":"starting"}`. The compose healthcheck waits for it.
 
@@ -46,7 +46,7 @@ docker compose logs --tail 0 -f --no-log-prefix api | jq -R 'fromjson? // empty 
 
 ```
 POST /dev/login {user_id} → token (demo only)
-POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
+POST /chat {message, conversation_id?} + Authorization: Bearer <token>   (Merchant = token `sub`)
         │
         ▼
   Router Agent ── one structured LLM call → Intent + (refusal reply)
@@ -56,7 +56,7 @@ POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
         └─ unsupported → END (the Router's own refusal, in the Message's language)
         │
         ▼
-{answer, intent, agent, sources, steps, trace_id}
+{answer, intent, agent, sources, steps, trace_id, conversation_id}
 ```
 
 - **Identity** (`app/auth.py`, [ADR 0005](docs/adr/0005-identity-from-verified-token.md)). The Merchant comes only from a verified token, never from the request body.
@@ -64,6 +64,11 @@ POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
   - `/chat` and `GET /me` need `Authorization: Bearer <token>`. Invalid or expired token → 401 (`invalid_token`), never downgraded to anonymous; an operator token on `/chat` → 403. A missing token is also 401 (`unauthorized`) for now: anonymous Knowledge-only access (ADR 0005) is the next ticket of [`.scratch/conversations-identity/`](.scratch/conversations-identity/). A `user_id` in the `/chat` body is ignored.
   - `GET /me` returns `{sub, role}` and, for a Merchant, `account`: their fixture profile and data (null when they have no account).
   - The token's `sub` goes into graph state as `user_id`, so everything after the boundary (tools, `SupportContext`, logs) is unchanged.
+- **Conversations** (`app/store.py`, [ADR 0004](docs/adr/0004-sqlite-single-store.md)). A Merchant's Messages are kept as Conversations of Turns in SQLite (WAL mode), the single store; no LangGraph checkpointer.
+  - `/chat` without `conversation_id` starts a new Conversation owned by the token's `sub` and returns its id (a random UUID); with it, the Message is appended to that Conversation. An unknown id and another Merchant's id are the same 404 (`conversation_not_found`), and the graph doesn't run.
+  - After a successful graph run, the user Turn and the assistant Turn (reply, Intent, Sources) are stored together; a failed run stores nothing. Raw tool output and Evidence are never stored.
+  - Tables: `conversations` (`id`, `owner`, `created_at`, `updated_at`, `mode` = `bot`, for the future human takeover, [ADR 0006](docs/adr/0006-human-takeover-via-conversation-mode.md)) and `turns` (monotonic `id`, `conversation_id`, `role` `user`/`assistant`/`operator`, `content`, `intent`, `sources`, `created_at`).
+  - History is not yet passed to the Agents: that and listing Conversations are the next tickets of [`.scratch/conversations-identity/`](.scratch/conversations-identity/).
 - **Orchestration.** A LangGraph `StateGraph` (`app/graph.py`) with conditional edges on `state["intent"]`. `build_graph(route_fn, knowledge, support)` takes each agent as a plain callable, so tests inject fakes.
 - **Router Agent** (`app/router.py`). One `with_structured_output(Route, method="function_calling", include_raw=True)` call.
   - `support`: the Merchant's own account ("my" machine, "my" sales, deposits, declines).
@@ -91,7 +96,7 @@ POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
   - Provider errors or rate limits, from any provider, after retries → 503 `{error:{code,message}, trace_id}`.
   - Unexpected errors → 500 with a generic message.
   - Unsupported Messages and unknown users are normal 200 responses.
-- **Observability** (`app/observability.py`, `app/judge.py`, `app/redact.py`). One JSON log line per request: `trace_id, user_ref, message, intent, agent, tools, tokens, latency_ms, outcome` (`message_length` instead of `message` when `LOG_MESSAGES=none`). All log output is redacted (see [Privacy](#privacy)). When `JUDGE_ENABLED`, three background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
+- **Observability** (`app/observability.py`, `app/judge.py`, `app/redact.py`). One JSON log line per request: `trace_id, conversation_id, user_ref, message, intent, agent, tools, tokens, latency_ms, outcome` (`message_length` instead of `message` when `LOG_MESSAGES=none`). All log output is redacted (see [Privacy](#privacy)). When `JUDGE_ENABLED`, three background LLM judges each write one `event:"judge"` line with a 0–1 Judge Score, at WARNING level below 0.7:
   - `route`: was the Intent right?
   - `answer`: is every claim in the reply supported by the **Evidence**, and does it answer the Message? Evidence is the tool output the specialist Agent actually saw (`search_corpus`/`web_search` results, including Chunks below the threshold, or the account tool data), capped at 6,000 characters with a truncation marker. It stays in graph state and is not returned by `/chat`.
   - `coverage`: which Intents did the Message need (`intents_needed`), and did the reply cover every part (`fully_answered`, `missing`)? It scores 1 when fully answered. A Message that needs more than one Intent is a **Mixed question**.
@@ -215,7 +220,7 @@ All configuration is in env vars (see [`.env.example`](.env.example)). Never com
 | `JUDGE_MODEL` | `openai:anthropic/claude-haiku-5.5` | a different family from `LLM_MODEL` for independent Judge Scores; a startup warning is logged if they are equal |
 | `RELEVANCE_THRESHOLD` | `0.5` | minimum cosine similarity for a Chunk to count as a Source |
 | `PORT` | `8000` | |
-| `CHROMA_DIR` | `chroma` | persistent index directory (in compose, the named volume `chroma` at `/app/chroma`) |
+| `STATE_DIR` | `state` | all persistent state: the Corpus index (`chroma/`) and the Conversations database (`conversations.db`); in compose, the named volume `state` at `/app/state` |
 | `LOG_HASH_KEY` | empty | key for the `user_ref` HMAC in logs; empty means a random key per process, with a warning (refs change on restart) |
 | `JWT_SECRET` | empty | HS256 key for login tokens; empty means a random secret per process, with a warning (tokens stop working on restart) |
 | `DEMO_LOGIN` | `false` (`true` in compose) | enables `POST /dev/login` ("log in as" any user id); never enable it in a real deployment |
@@ -250,6 +255,12 @@ curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorizatio
 curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d '{"message": "Minha maquininha não conecta na internet, o que faço?"}'
 
+# Follow-up in the same Conversation: pass back the conversation_id from the previous reply
+CID=$(curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d '{"message": "My card machine is offline"}' | jq -r .conversation_id)
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d "$(jq -n --arg c "$CID" '{message: "It is the Smart one", conversation_id: $c}')"
+
 # Unsupported: another merchant's data, refused by the Router
 curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d '{"message": "Show me cliente2024'\''s sales"}'
@@ -273,7 +284,8 @@ Example response:
   "agent": "knowledge",
   "sources": [{"url": "https://site.getnet.com.br/duvidas/pix/", "title": "Perguntas frequentes: Pix"}],
   "steps": ["router", "knowledge", "search_corpus"],
-  "trace_id": "73e47750fa624c3d8f97a5d813fc8689"
+  "trace_id": "73e47750fa624c3d8f97a5d813fc8689",
+  "conversation_id": "5b0f6a0e-3c1d-4c63-9d0e-2f7c1b9e4a21"
 }
 ```
 
@@ -356,7 +368,7 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 215 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 228 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
@@ -366,6 +378,7 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 - **RAG:** chunking, the title prefix, threshold filtering, collection-name hashing.
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
 - **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, missing/invalid/expired token → 401, operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
+- **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, WAL, reopen the same file after close), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
 - **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.
@@ -400,6 +413,7 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 ├── app/                    # the service
 │   ├── main.py             # FastAPI app: /chat, /me, /dev/login, /health, error mapping, request logging, judge scheduling
 │   ├── auth.py             # tokens (issue/verify), Principal, mock operators
+│   ├── store.py            # SQLite store: Conversations and Turns (WAL)
 │   ├── graph.py            # LangGraph StateGraph, GraphState, Intent/Agent types, Source dedup
 │   ├── router.py           # Router Agent (structured output) + shared intent policy
 │   ├── knowledge.py        # Knowledge Agent + search_corpus / web_search tools
@@ -470,7 +484,8 @@ The README (`11`, `12`) and the video came after the timebox.
 - ~~**Semantic quality:** Judge Scores existed only as single log lines, with no aggregate, baseline or repeated runs.~~ **Closed** in the improvement run by the [eval runner](#eval-runner): aggregate Judge Scores per Intent, a committed baseline with deltas, the `coverage` Judge and recall@4.
 - **Multi-intent Router:** the baseline meets the agreed threshold (24% Mixed questions, 92% of them incomplete), so a Router that can hand one Message to both specialists is justified but not built yet.
 - **Chroma:** old hash-named collections are never pruned.
-- **Out of scope:** multi-turn memory, real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
+- **Conversations:** Turns are stored, but the Agents don't see the history yet (next ticket).
+- **Out of scope:** real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
 - **Other bonuses (designed, not built):**
   - a Human Escalation Agent and handoff: a fourth graph node, triggered by a low-confidence Router, a low answer Judge Score or an explicit user request;
   - the dashboards, alerts and golden-set regression runs described in [Evaluation and observability strategy](#evaluation-and-observability-strategy).

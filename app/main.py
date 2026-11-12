@@ -15,6 +15,7 @@ from app.graph import Agent, Intent, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy, log_request, setup_logging
+from app.store import NewTurn, Store
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ class ChatRequest(BaseModel):
     """The Merchant comes from the token; any `user_id` in the body is ignored."""
 
     message: str = Field(min_length=1)
+    # Continue this Conversation; omitted, the Message starts a new one.
+    conversation_id: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -41,6 +44,7 @@ class ChatResponse(BaseModel):
     sources: list[Source]
     steps: list[str]
     trace_id: str
+    conversation_id: str | None = None
 
 
 def load_default_index():
@@ -89,6 +93,7 @@ def create_app(
     judge_model: Any = None,
     log_privacy: LogPrivacy | None = None,
     auth: AuthSettings | None = None,
+    store: Store | None = None,
 ) -> FastAPI:
     """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted.
 
@@ -102,6 +107,9 @@ def create_app(
 
     `auth` (token secret, dev-login flag, clock) defaults to `JWT_SECRET` /
     `DEMO_LOGIN`, resolved at startup like `log_privacy`.
+
+    `store` (Conversations and Turns) defaults to the SQLite file in `STATE_DIR`,
+    resolved at startup like `log_privacy`.
 
     `load_index` runs in a background thread at startup; until it returns,
     `/health` and `/chat` answer 503. Without it there is no index to wait for.
@@ -118,6 +126,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         get_log_privacy()
         get_auth()
+        get_store()
         if judge_model is None and judges_on():
             from app.settings import get_settings, warn_if_judge_not_independent
 
@@ -134,6 +143,14 @@ def create_app(
     app.state.judge_model = judge_model
     app.state.log_privacy = log_privacy
     app.state.auth = auth
+    app.state.store = store
+
+    def get_store() -> Store:
+        if app.state.store is None:
+            from app.settings import get_settings
+
+            app.state.store = Store(get_settings().database_path)
+        return app.state.store
 
     def get_auth() -> AuthSettings:
         if app.state.auth is None:
@@ -245,6 +262,7 @@ def create_app(
     ):
         trace_id = uuid.uuid4().hex
         started = time.perf_counter()
+        conversation_id = request.conversation_id
 
         def log_outcome(outcome: str, result: dict | None = None) -> None:
             log_request(
@@ -255,11 +273,16 @@ def create_app(
                 latency_ms=round((time.perf_counter() - started) * 1000),
                 outcome=outcome,
                 result=result,
+                conversation_id=conversation_id,
             )
 
         if not ready():
             log_outcome("starting")
             return _error(503, "starting", "The service is starting; try again shortly.", trace_id)
+        # Someone else's Conversation looks exactly like one that doesn't exist.
+        if conversation_id is not None and get_store().conversation(conversation_id, caller.sub) is None:
+            log_outcome("conversation_not_found")
+            return _error(404, "conversation_not_found", "Conversation not found.", trace_id)
         try:
             if app.state.graph is None:
                 app.state.graph = build_default_graph(app.state.index)
@@ -278,6 +301,13 @@ def create_app(
             return _error(500, "internal_error", "Internal server error.", trace_id)
 
         intent = result["intent"]
+        # Only after a successful run, so a failed one stores nothing. Sources, never Evidence.
+        if conversation_id is None:
+            conversation_id = get_store().create_conversation(caller.sub)
+        get_store().append_turns(conversation_id, [
+            NewTurn("user", request.message, intent=intent),
+            NewTurn("assistant", result.get("answer", ""), intent=intent, sources=result.get("sources", [])),
+        ])
         log_outcome("ok", result)
         if judges_on():
             background.add_task(judge, trace_id, request.message, result)
@@ -288,6 +318,7 @@ def create_app(
             sources=result.get("sources", []),
             steps=result.get("steps", []),
             trace_id=trace_id,
+            conversation_id=conversation_id,
         )
 
     return app
