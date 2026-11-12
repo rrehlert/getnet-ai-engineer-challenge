@@ -84,7 +84,7 @@ def test_dev_users_is_404_when_demo_login_is_off():
     assert response.json() == client.get("/no-such-path").json()
 
 
-def test_dev_users_lists_fixture_merchants_operators_and_nobody_with_roles():
+def test_dev_users_lists_fixture_merchants_and_operators_with_roles():
     response = TestClient(make_app()).get("/dev/users")
 
     assert response.status_code == 200
@@ -94,9 +94,7 @@ def test_dev_users_lists_fixture_merchants_operators_and_nobody_with_roles():
     assert users == {
         **{m: "merchant" for m in merchants},
         **{o: "operator" for o in OPERATORS},
-        "nobody": "merchant",
     }
-    assert "nobody" not in merchants  # the unknown id really has no account
 
 
 def test_every_dev_user_logs_in_with_the_listed_role():

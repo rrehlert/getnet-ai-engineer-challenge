@@ -454,11 +454,11 @@ class Store:
         ]
 
     def queue(self) -> list[Handoff]:
-        """The open Handoffs of Conversations in `waiting_human`, oldest first (Operator side only)."""
+        """The open Handoffs of Conversations in `waiting_human`, newest first (Operator side only)."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT h.* FROM handoffs h JOIN conversations c ON c.id = h.conversation_id"
-                " WHERE c.mode = 'waiting_human' AND h.ended_at IS NULL ORDER BY h.created_at, h.id"
+                " WHERE c.mode = 'waiting_human' AND h.ended_at IS NULL ORDER BY h.created_at DESC, h.id DESC"
             ).fetchall()
         return [_handoff(r) for r in rows]
 

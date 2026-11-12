@@ -137,7 +137,7 @@ def operator_router(
 
     @router.get("/queue", response_model=Queue)
     def queue(caller: Operator):
-        """Conversations waiting for an Operator, oldest Handoff first, with the brief's key fields."""
+        """Conversations waiting for an Operator, newest Handoff first, with the brief's key fields."""
         return Queue(conversations=[
             QueueItem(
                 conversation_id=h.conversation_id,

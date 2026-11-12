@@ -13,7 +13,7 @@ const OPERATOR_PANELS = [];
 (() => {
   const LIST_MS = 5000;
   const DETAIL_MS = 2000;
-  const AUTHORS = { user: "Merchant", assistant: "Assistant", operator: "Agent" };
+  const AUTHORS = { user: "Merchant", assistant: "Assistant", operator: "Operator" };
   const MODE_LABELS = { bot: "bot", waiting_human: "waiting for human", human: "human", closed: "closed" };
 
   function age(iso) {

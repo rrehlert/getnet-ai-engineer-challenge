@@ -26,7 +26,7 @@ Everything built so far is reachable only through curl and a shell helper. A rev
 4. As a Merchant, I want to see my Conversations and reopen one, so that I can continue where I left off.
 5. As a Merchant, I want to start a new Conversation, so that a new topic doesn't mix with an old one.
 6. As a Merchant, I want to see the Sources under an answer, so that I can check where it came from.
-7. As a Merchant, I want to see whether I'm talking to the assistant or to an agent, and when I'm waiting for one, so that I know who is answering.
+7. As a Merchant, I want to see whether I'm talking to the assistant or to an Operator, and when I'm waiting for one, so that I know who is answering.
 8. As a Merchant, I want Operator replies to appear without reloading, so that the Conversation feels live.
 9. As a Merchant, I want a closed Conversation to be read-only with a way to start a new one, so that I know the case is finished.
 10. As a Merchant, I want to see my account (profile, Terminals, recent Settlements), so that I can compare what the assistant says with my data.
@@ -52,20 +52,20 @@ Everything built so far is reachable only through curl and a shell helper. A rev
 - Untrusted text (Messages, answers, Operator replies, Handoff Brief, Source titles, events) is rendered only with `textContent`. Source links only for `http(s)` URLs. A test fails if `app.js` uses `innerHTML` with anything other than a static string.
 
 **Login and session**
-- `GET /dev/users` (exists only with `DEMO_LOGIN=true`, else 404) returns the fixture Merchant ids, the ids in `OPERATORS`, and a fixed unknown id (`nobody`). The page shows them as a dropdown, plus a free-text id field.
+- `GET /dev/users` (exists only with `DEMO_LOGIN=true`, else 404) returns the fixture Merchant ids and the ids in `OPERATORS` (an unknown id can still be typed in the free-text field). The page shows them as a dropdown, plus a free-text id field.
 - Without `DEMO_LOGIN`: no dropdown; a "paste a token" field, and anonymous chat.
 - The token is stored in `localStorage`. A header shows `sub`, role and the time left (decoded client-side, for display only), plus Logout.
 - Any 401 clears the token and returns to login with "Session expired".
 
 **Merchant view** (role `merchant`)
 - Left: own Conversations (`GET /conversations`, newest first, Mode badge) and "New conversation". Right: chat.
-- Assistant Turns show collapsible Sources (title + link). Operator Turns are labelled "Agent", bot Turns "Assistant".
-- Mode banner: `waiting_human` "Waiting for an agent…", `human` "Talking to an agent". In `closed` the input is disabled and "Start a new conversation" is offered (a `/chat` 409 leads there too).
+- Assistant Turns show collapsible Sources (title + link). Operator Turns are labelled "Operator" ("agent" could read as an AI agent), bot Turns "Assistant".
+- Mode banner: `waiting_human` "Waiting for an Operator…", `human` "Talking to an Operator". In `closed` the input is disabled and "Start a new conversation" is offered (a `/chat` 409 leads there too).
 - Account panel from `GET /me` (profile, Terminals, recent Settlements), collapsible. An unknown Merchant sees "account not found".
 - Anonymous (no token): chat only, no list, no account panel. Each Message is stateless, as on the API.
 
 **Operator view** (role `operator`)
-- Tabs: **Queue** (`GET /operator/queue`, oldest first: category, priority, customer_ask, age) and **Review** (`GET /operator/review`, newest first).
+- Tabs: **Queue** (`GET /operator/queue`, newest first: category, priority, customer_ask, age) and **Review** (`GET /operator/review`, newest first).
 - Detail (`GET /operator/conversations/{id}`):
   - Turns;
   - Handoff Brief card;
@@ -96,14 +96,14 @@ Everything built so far is reachable only through curl and a shell helper. A rev
 
 - Through `create_app` with TestClient, as in earlier specs. No browser automation.
 - The page is served at `/` with its assets.
-- `/dev/users`: 404 without `DEMO_LOGIN`; with it, lists the fixture Merchants, `OPERATORS` and `nobody`.
+- `/dev/users`: 404 without `DEMO_LOGIN`; with it, lists the fixture Merchants and `OPERATORS`.
 - Events endpoint: role enforcement (Merchant → 403); visibility (no Handoff, no flag → 404); returns only events of that Conversation's traces, including a Judge event emitted after the request; events of another Conversation are excluded; the buffer is bounded.
 - `innerHTML` check over `app.js`.
 - C3: the original Merchants are unchanged (eval dataset hash and expected facts still hold); the new Merchants load through `load_merchants`.
 - Live check: two windows (private one for the Merchant, normal one for the Operator), walking through:
   - anonymous chat;
   - Merchant chat with Sources;
-  - ask for a person → Queue → claim → reply with the suggestion → Merchant sees "Agent" → handback → bot answers;
+  - ask for a person → Queue → claim → reply with the suggestion → Merchant sees "Operator" → handback → bot answers;
   - escalate → close;
   - events panel showing the Judge events.
 

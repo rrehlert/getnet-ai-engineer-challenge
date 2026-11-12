@@ -11,10 +11,10 @@ const merchantView = (() => {
 const TURNS_POLL_MS = 2000;
 const LIST_POLL_MS = 5000;
 
-const MODE_LABELS = { bot: "Assistant", waiting_human: "Waiting", human: "Agent", closed: "Closed" };
+const MODE_LABELS = { bot: "Assistant", waiting_human: "Waiting", human: "Operator", closed: "Closed" };
 const MODE_BANNERS = {
-  waiting_human: "Waiting for an agent…",
-  human: "Talking to an agent",
+  waiting_human: "Waiting for an Operator…",
+  human: "Talking to an Operator",
   closed: "This conversation is closed.",
 };
 
@@ -183,7 +183,7 @@ function merchantView(container) {
     const mine = messageNode("user", text);
     mine.classList.add("unsent");
     messages.append(mine);
-    // Outside `bot` nobody answers right away: the Message waits for the agent.
+    // Outside `bot` nobody answers right away: the Message waits for the Operator.
     const pending = state.mode === "bot" ? el("div", { class: "msg assistant pending" }, "Thinking…") : null;
     if (pending) messages.append(pending);
     scroll();

@@ -51,7 +51,7 @@ def test_each_new_merchant_has_its_demo_path():
 
     held = merchants["cliente1975"]["settlements"]
     assert {"failed", "held"} <= {s["status"] for s in held}
-    assert all("support staff" in s["note"] for s in held if s["status"] in ("failed", "held"))
+    assert all("bank account on file is updated" in s["note"] for s in held if s["status"] in ("failed", "held"))
 
     reader = merchants["cliente2010"]["terminals"][0]
     assert reader["status"] == "offline" and reader["last_error"].startswith("CARD_READER_FAULT")
