@@ -1,5 +1,8 @@
 """The LangGraph orchestration: Router Agent, then a specialist or END.
 
+An anonymous visitor (`user_id` None, ADR 0005) never reaches the Customer
+Support Agent: `support` goes to the deterministic `login` node instead.
+
 Specialist interface (Knowledge / Customer Support Agents and the Router):
 a callable that takes the `GraphState` and returns a partial update dict,
 typically `{answer, sources, evidence, steps, tokens}`. `steps` and `tokens` are
@@ -16,9 +19,12 @@ Intent = Literal["knowledge", "support", "unsupported"]
 Agent = Literal["router", "knowledge", "support"]
 
 
-def agent_for(intent: Intent) -> Agent:
-    """The Agent that answers an Intent: the Router itself refuses `unsupported`."""
-    return "router" if intent == "unsupported" else intent
+def agent_for(intent: Intent, anonymous: bool = False) -> Agent:
+    """The Agent that answers an Intent: the Router itself refuses `unsupported`,
+    and answers an anonymous visitor's `support` Message with the login reply."""
+    if intent == "unsupported" or (anonymous and intent == "support"):
+        return "router"
+    return intent
 
 
 class Source(TypedDict):
@@ -43,7 +49,7 @@ class Evidence(TypedDict):
 
 class GraphState(TypedDict):
     message: str
-    user_id: str
+    user_id: str | None  # the Merchant; None for an anonymous visitor
     intent: NotRequired[Intent]
     answer: NotRequired[str]
     sources: NotRequired[list[Source]]
@@ -58,6 +64,32 @@ EMPTY_ANSWER_FALLBACK = (
     "Não consegui gerar uma resposta. Por favor, reformule sua pergunta. "
     "I couldn't produce an answer. Please rephrase your question."
 )
+
+
+LOGIN_REPLY = (
+    "Para ver os dados da sua conta (vendas, recebimentos e maquininhas), faça login. "
+    "Sem login, posso ajudar com produtos e serviços da Getnet. "
+    "To see your account data (sales, deposits and card machines), please log in. "
+    "Without logging in, I can help with Getnet products and services."
+)
+
+
+LOGIN_STEP = "login"  # a graph step that is neither an Agent nor a tool
+
+
+def login_reply(state: GraphState) -> dict:
+    """An anonymous visitor's account question: a fixed reply, no model, no tools."""
+    return {"answer": LOGIN_REPLY, "sources": [], "steps": [LOGIN_STEP]}
+
+
+def _next(state: GraphState) -> str:
+    """After the Router: the Intent's node, except `support` without a Merchant → `login`."""
+    intent = state.get("intent")
+    if intent is None:
+        raise ValueError("the Router set no Intent")
+    if intent == "support" and state["user_id"] is None:
+        return LOGIN_STEP
+    return intent
 
 
 def _never_empty(specialist: Node) -> Node:
@@ -78,13 +110,15 @@ def build_graph(route_fn: Node, knowledge: Node, support: Node):
     builder.add_node("router", route_fn)
     builder.add_node("knowledge", _never_empty(knowledge))
     builder.add_node("support", _never_empty(support))
+    builder.add_node(LOGIN_STEP, login_reply)
 
     builder.add_edge(START, "router")
     builder.add_conditional_edges(
         "router",
-        lambda state: state["intent"],
-        {"knowledge": "knowledge", "support": "support", "unsupported": END},
+        _next,
+        {"knowledge": "knowledge", "support": "support", LOGIN_STEP: LOGIN_STEP, "unsupported": END},
     )
+    builder.add_edge(LOGIN_STEP, END)
     builder.add_edge("knowledge", END)
     builder.add_edge("support", END)
     return builder.compile()

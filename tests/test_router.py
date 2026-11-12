@@ -86,3 +86,22 @@ def test_unsupported_with_empty_reply_gets_a_fixed_bilingual_refusal():
     assert update["intent"] == "unsupported"
     assert update["answer"] == REFUSAL
     assert "Getnet" in REFUSAL and "Desculpe" in REFUSAL and "Sorry" in REFUSAL
+
+
+def test_router_is_told_an_anonymous_visitor_is_not_logged_in():
+    model = FakeStructuredModel(Route(intent="support"))
+
+    update = make_router(model)({"message": "When is my deposit?", "user_id": None})
+
+    system = str(model.seen[0].content)
+    assert "not logged in" in system
+    assert "None" not in system
+    assert update["intent"] == "support"
+
+
+def test_router_prompt_for_a_merchant_does_not_say_not_logged_in():
+    model = FakeStructuredModel(Route(intent="support"))
+
+    make_router(model)(STATE)
+
+    assert "not logged in" not in str(model.seen[0].content)

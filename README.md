@@ -19,7 +19,7 @@ The container runs as a non-root user (`app`, uid 10001). The index lives on the
 
 `/health` returns `{"status":"ok"}` once the index is ready. Until then it returns 503 `{"status":"starting"}`. The compose healthcheck waits for it.
 
-Try it with a small shell helper (needs `jq`). `/chat` takes the Merchant only from a login token, so log in first; compose enables the dev login (`DEMO_LOGIN=true`):
+Try it with a small shell helper (needs `jq`). `/chat` takes the Merchant only from a login token, so log in first for account questions; compose enables the dev login (`DEMO_LOGIN=true`). Without a token you are an anonymous visitor: product questions only.
 
 ```bash
 # login [user_id]   (log in as a Merchant via the dev login; user_id defaults to cliente1988)
@@ -34,6 +34,9 @@ chat "Do I need a bank account to receive my sales via Pix?"        # Knowledge 
 chat "What's the euro exchange rate today?"                         # Knowledge (web search)
 chat "When will the money from yesterday's sales be deposited?"     # Customer Support
 chat "Show me cliente2024's sales"                                  # refused by the Router
+
+# no token: anonymous visitor, account questions get the "log in" reply
+curl -s localhost:8000/chat -H 'content-type: application/json' -d '{"message": "When is my next deposit?"}' | jq
 ```
 
 Follow the request and Judge log lines in another terminal:
@@ -46,13 +49,14 @@ docker compose logs --tail 0 -f --no-log-prefix api | jq -R 'fromjson? // empty 
 
 ```
 POST /dev/login {user_id} → token (demo only)
-POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
+POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`; no token = anonymous visitor)
         │
         ▼
   Router Agent ── one structured LLM call → Intent + (refusal reply)
         │
         ├─ knowledge   → Knowledge Agent        → search_corpus (RAG) / web_search
         ├─ support     → Customer Support Agent → get_settlement_schedule / get_terminal_status / get_recent_transactions
+        │                (anonymous: → login node, fixed PT + EN "log in to see your account" reply)
         └─ unsupported → END (the Router's own refusal, in the Message's language)
         │
         ▼
@@ -61,7 +65,8 @@ POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
 
 - **Identity** (`app/auth.py`, [ADR 0005](docs/adr/0005-identity-from-verified-token.md)). The Merchant comes only from a verified token, never from the request body.
   - `POST /dev/login {user_id}` returns `{access_token, token_type}`: an HS256 JWT (PyJWT) with `sub`, `role` (`merchant` or `operator`) and `exp` (1 hour), signed with `JWT_SECRET`. It is a "log in as" stand-in for an identity provider and proves nothing about the caller, so it exists only with `DEMO_LOGIN=true` (compose sets it; the default is off, and then it is 404). Ids in the fixture and unknown ids log in as Merchants (an unknown one gets the "account not found" reply); the mock operator `operador1` gets role `operator`.
-  - `/chat` and `GET /me` need `Authorization: Bearer <token>`. Invalid or expired token → 401 (`invalid_token`), never downgraded to anonymous; an operator token on `/chat` → 403. A missing token is also 401 (`unauthorized`) for now: anonymous Knowledge-only access (ADR 0005) is the next ticket of [`.scratch/conversations-identity/`](.scratch/conversations-identity/). A `user_id` in the `/chat` body is ignored.
+  - Requests carry `Authorization: Bearer <token>`. Invalid or expired token → 401 (`invalid_token`), never downgraded to anonymous; an operator token on `/chat` → 403. A `user_id` in the `/chat` body is ignored. `GET /me` without a token → 401 (`unauthorized`).
+  - **Anonymous visitors.** `/chat` without a token runs the graph with no Merchant (`user_id` None) and the Router prompt says the visitor is not logged in. `knowledge` and `unsupported` work as for a Merchant; `support` goes to a deterministic `login` node that returns a fixed bilingual "log in to see your account" reply (`agent` `router`, `steps` `["router", "login"]`), so the Customer Support Agent never runs. Anonymous requests are stateless: a `conversation_id` without a token → 401 (`unauthorized`). The request log's `user_ref` is `anonymous`.
   - `GET /me` returns `{sub, role}` and, for a Merchant, `account`: their fixture profile and data (null when they have no account).
   - The token's `sub` goes into graph state as `user_id`, so everything after the boundary (tools, `SupportContext`, logs) is unchanged.
 - **Orchestration.** A LangGraph `StateGraph` (`app/graph.py`) with conditional edges on `state["intent"]`. `build_graph(route_fn, knowledge, support)` takes each agent as a plain callable, so tests inject fakes.
@@ -121,6 +126,7 @@ POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
 
 - **Scope guardrail:** the Router's `unsupported` Intent catches off-topic requests, attempts to read another Merchant's data, prompt injection ("ignore your instructions…") and harmful requests. It replies with a polite refusal in the Message's language and calls no tools.
 - **Identity:** the Merchant comes only from a verified, expiring token (see [Overview](#overview)); a bad token is rejected, never treated as no token.
+- **Anonymous access is Knowledge only:** without a token the graph routes `support` to a fixed login reply, never to the Customer Support Agent, whatever the Router says.
 - **Data isolation:** `user_id` lives in the tool runtime context, not the prompt. An unknown user gets an agent with no tools.
 - **Grounding:** Sources come only from tool artifacts and are filtered by the relevance threshold. The `answer` Judge checks claims against the Evidence.
 - **Log privacy:** personal data is masked in every log line and the user id is pseudonymized (see [Privacy](#privacy)).
@@ -148,7 +154,7 @@ Merchants type personal data into Messages, so no log line writes it in clear te
   | Pix random keys (UUID with dashes) | `[PIX_KEY]` |
 
   BRL amounts, ISO dates, `trace_id`s and Terminal ids are left intact.
-- **Pseudonymized user id.** The request line has `user_ref` instead of `user_id`: a keyed HMAC-SHA256 of the user id (the token's `sub`), first 16 hex characters, keyed by `LOG_HASH_KEY`. The same Merchant always gets the same ref (so events can be correlated), and without the key it can't be reversed by hashing every possible id. If `LOG_HASH_KEY` is empty, a random key is generated at startup with a warning, and refs change on every restart.
+- **Pseudonymized user id.** The request line has `user_ref` instead of `user_id`: a keyed HMAC-SHA256 of the user id (the token's `sub`), first 16 hex characters, keyed by `LOG_HASH_KEY`. The same Merchant always gets the same ref (so events can be correlated), and without the key it can't be reversed by hashing every possible id. If `LOG_HASH_KEY` is empty, a random key is generated at startup with a warning, and refs change on every restart. An anonymous visitor's request line has `user_ref` `anonymous`.
 - **Logging modes** (`LOG_MESSAGES`), for the Message on the request line and the Message and reply on Judge lines:
 
   | Mode | Logged |
@@ -260,8 +266,16 @@ NOBODY=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
 curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $NOBODY" \
   -d '{"message": "My card machine is showing a transaction decline error."}'
 
-# No token: 401
-curl -s localhost:8000/chat -H 'content-type: application/json' -d '{"message": "hi"}'
+# No token: anonymous visitor. Product questions are answered...
+curl -s localhost:8000/chat -H 'content-type: application/json' \
+  -d '{"message": "What'\''s the difference between the Get Clássica and the Get Smart?"}'
+# ...account questions get the fixed "log in to see your account" reply (agent "router", steps ["router", "login"])
+curl -s localhost:8000/chat -H 'content-type: application/json' \
+  -d '{"message": "Quanto vou receber hoje das minhas vendas?"}'
+
+# Invalid token: 401, never treated as anonymous
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer not-a-token" \
+  -d '{"message": "hi"}'
 ```
 
 Example response:
@@ -277,19 +291,19 @@ Example response:
 }
 ```
 
-To run the shared scenario dataset (the 10 example Messages from the challenge, 3 Router edge cases and 4 Mixed questions) against the running API, checking the expected Intent and, where declared, the expected facts in the reply:
+To run the shared scenario dataset (the 10 example Messages from the challenge, 3 Router edge cases, 4 Mixed questions and 2 anonymous-visitor scenarios) against the running API, checking the expected Intent and, where declared, the expected facts in the reply:
 
 ```bash
 uv run python scripts/scenarios.py            # or: scripts/scenarios.py http://host:port
 ```
 
-It logs in as each scenario's user id through `POST /dev/login` (so it needs `DEMO_LOGIN=true`, as in compose) and sends the token.
+It logs in as each scenario's user id through `POST /dev/login` (so it needs `DEMO_LOGIN=true`, as in compose) and sends the token. Scenarios with `"user_id": null` are anonymous visitors and are sent without a token: a product question (answered) and an account question (its facts check the login reply).
 
 Each scenario prints a routing mark and a facts mark (`✓`, `✗`, or `-` when it declares no facts), then the Intent, agent, steps, `trace_id`, answer, Sources and any missing facts. The report ends with two separate totals (here, an all-pass run):
 
 ```
-routing 17/17
-facts 11/11
+routing 19/19
+facts 13/13
 ```
 
 followed by the missing facts per scenario. A fact is a list of accepted alternatives, matched as case-insensitive substrings (e.g. an amount matches as `1.817,26`, `1817,26`, `1,817.26` or `1817.26`). Customer Support facts come from the fixture; Knowledge facts only where the fact is stable in the Corpus; refusals and web-search scenarios have none. A Mixed question routes correctly to any of its needed Intents. The exit code is non-zero if routing or facts are below 100%. For repeated runs, Judge Scores and a baseline, use the [eval runner](#eval-runner).
@@ -309,7 +323,7 @@ uv run python -m scripts.eval --save-baseline    # also copy this run over evals
 uv run python -m scripts.eval --retrieval-only   # only recall@4 against the index; no LLM key, no cost
 ```
 
-**What a run does.** Every scenario of [`evals/scenarios.json`](evals/scenarios.json) is run `EVAL_RUNS` times (default 3). Scenarios with a user id pass it straight into graph state (no HTTP). After each run, the three Judges run synchronously on `JUDGE_MODEL` with the Evidence, and their verdicts are kept.
+**What a run does.** Every scenario of [`evals/scenarios.json`](evals/scenarios.json) is run `EVAL_RUNS` times (default 3). Scenarios with a user id pass it straight into graph state (no HTTP); anonymous ones (`"user_id": null`) pass `None`, as `/chat` does without a token, and the Judges are told the visitor is not logged in (the `answer` Judge rates an anonymous `support` reply on asking to log in, not on account Evidence). After each run, the three Judges run synchronously on `JUDGE_MODEL` with the Evidence, and their verdicts are kept.
 
 **What is measured:**
 - **Per scenario:** routing pass rate, fact pass rate (the same checks as `scripts/scenarios.py`), mean and min Judge Score per Judge Type, coverage fields (`fully_answered` rate, `intents_needed`, `missing`), tokens.
@@ -317,13 +331,13 @@ uv run python -m scripts.eval --retrieval-only   # only recall@4 against the ind
 - **Mixed questions:** the mixed-question rate (share of judged runs where the `coverage` Judge listed ≥2 needed Intents) and the incomplete rate (share of those not fully answered). The coverage Judge's agreement with the 4 labelled Mixed scenarios is reported as a sanity check.
 - **Multi-intent Router threshold** (agreed before measuring): mixed-question rate **≥10%** and incomplete rate **≥50%** → "build multi-intent Router", otherwise "not justified". Today the Router picks one Intent per Message.
 - **Retrieval recall@4:** on [`evals/retrieval.json`](evals/retrieval.json), 14 labelled Portuguese Knowledge questions with their expected Corpus URLs. A question hits when an expected URL is among the pages of the top 4 Chunks, computed against the index directly (no model). Misses are listed with the URLs that came back, to tell a Corpus gap from a ranking problem.
-- **Tokens:** total and per Intent, so the cost of a run is visible. A full run is 17 scenarios × 3 runs × (graph + 3 Judges), about 160k tokens.
+- **Tokens:** total and per Intent, so the cost of a run is visible. A full run is 19 scenarios × 3 runs × (graph + 3 Judges); with 17 scenarios it was about 160k tokens.
 
 **Output.** Each run writes `evals/results/<UTC timestamp>.json` (gitignored) with metadata (commit, dirty tree, date, reply model, Judge model, run count, dataset hashes), the sections above and every run record. It prints a summary and the deltas against the committed baseline [`evals/baseline.json`](evals/baseline.json): rates in percentage points, Judge Score means, Mixed/incomplete rates, tokens per run. A warning is printed when the reply model, Judge model or scenario dataset hash differ from the baseline's, since the deltas are then not like-for-like.
 
 **Privacy.** Unlike the logs, the results file (and so the committed baseline) holds raw Messages and replies, unredacted. That is fine while the eval only uses the fixture Merchants in `data/merchants.json`. With real Merchant data, commit only the aggregates and keep the run records in a gitignored file.
 
-**Baseline** (`evals/baseline.json`, commit `ad0769b`, reply `openai:openai/gpt-6-luna`, Judge `openai:anthropic/claude-haiku-5.5`, 3 runs × 17 scenarios = 51 runs, 0 errors):
+**Baseline** (`evals/baseline.json`, commit `ad0769b`, reply `openai:openai/gpt-6-luna`, Judge `openai:anthropic/claude-haiku-5.5`, 3 runs × 17 scenarios = 51 runs, 0 errors; taken before the 2 anonymous scenarios were added, so the next run warns that the dataset hash differs):
 
 | Intent | Runs | Routing | Facts | `route` | `answer` | `coverage` |
 |---|---|---|---|---|---|---|
@@ -356,7 +370,7 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 215 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 234 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
@@ -365,18 +379,19 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
   - an unknown user triggers no tool call.
 - **RAG:** chunking, the title prefix, threshold filtering, collection-name hashing.
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
-- **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, missing/invalid/expired token → 401, operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
+- **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, invalid/expired token → 401 (never anonymous), operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
+- **Anonymous visitors:** no token with a fake Router: `support` gets the login reply and the Customer Support node is never called, `knowledge`/`unsupported` as today, `conversation_id` → 401, `{}` → 422, `user_ref` `anonymous`; the Router prompt (scripted fake model) and the Judges are told the visitor is not logged in.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
 - **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.
 - **Eval runner:** aggregation over hand-built run records (pass rates, means, Mixed and incomplete rates, threshold decision, baseline deltas), the runner wiring with a fake graph and Judge model, and recall@4 with a fake index.
 - **Ingestion:** the extraction XPath, on saved HTML fixtures.
 
-**2. End-to-end scenarios (`scripts/scenarios.py`) and the eval runner (`scripts/eval.py`).** The scenarios run against the real container and the real LLM: the 10 challenge Messages, 3 Router edge cases (prompt injection, another Merchant's data, a Portuguese Message) and 4 Mixed questions. Each gets a ✓/✗ on the expected Intent and on its expected facts, and the answers and Sources are printed for review. Before the Mixed questions, routing was consistently 13/13 and facts varied between runs (6/7, 7/7 and 5/7, the first before a fact was corrected; see the diary), mostly from nondeterministic retrieval. The [eval runner](#eval-runner) runs the same dataset in-process several times, with Judge Scores, so this variance is measured instead of eyeballed.
+**2. End-to-end scenarios (`scripts/scenarios.py`) and the eval runner (`scripts/eval.py`).** The scenarios run against the real container and the real LLM: the 10 challenge Messages, 3 Router edge cases (prompt injection, another Merchant's data, a Portuguese Message), 4 Mixed questions and 2 anonymous-visitor scenarios. Each gets a ✓/✗ on the expected Intent and on its expected facts, and the answers and Sources are printed for review. Before the Mixed questions, routing was consistently 13/13 and facts varied between runs (6/7, 7/7 and 5/7, the first before a fact was corrected; see the diary), mostly from nondeterministic retrieval. The [eval runner](#eval-runner) runs the same dataset in-process several times, with Judge Scores, so this variance is measured instead of eyeballed.
 
 **CI (`.github/workflows/ci.yml`).** On every push and pull request (changes only under `.scratch/`, `docs/` or to the diary are skipped):
 - `test`: `uv sync --locked`, then `uv run pytest`;
-- `smoke`: `docker compose up -d --build`, wait up to 300 s for `/health` = 200, log in via `/dev/login`, POST `{}` to `/chat` with the token and expect 422, print logs on failure, always `docker compose down -v`.
+- `smoke`: `docker compose up -d --build`, wait up to 300 s for `/health` = 200, POST `{}` to `/chat` without a token (anonymous) and, after logging in via `/dev/login`, with the token, expecting 422 both times, print logs on failure, always `docker compose down -v`.
 
 It uses no secrets: the app starts and builds its index without an LLM key, and `/chat` is never called with a valid body, so CI makes no LLM calls.
 

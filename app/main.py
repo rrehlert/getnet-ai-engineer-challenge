@@ -23,6 +23,8 @@ class ChatRequest(BaseModel):
     """The Merchant comes from the token; any `user_id` in the body is ignored."""
 
     message: str = Field(min_length=1)
+    # Only with a token: an anonymous request carrying one is 401.
+    conversation_id: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -142,13 +144,13 @@ def create_app(
             app.state.auth = AuthSettings.from_settings(get_settings())
         return app.state.auth
 
-    def principal(authorization: Annotated[str | None, Header()] = None) -> Principal:
-        """The verified caller. A bad token is always 401, never downgraded to anonymous.
+    def optional_principal(authorization: Annotated[str | None, Header()] = None) -> Principal | None:
+        """The verified caller, or None (anonymous) without a token.
 
-        A missing token is 401 too, until anonymous access (ADR 0005) lands in conversations-identity ticket 02.
+        A bad token is always 401, never downgraded to anonymous (ADR 0005).
         """
         if authorization is None:
-            raise AuthError(401, "unauthorized", "Log in and send `Authorization: Bearer <token>`.")
+            return None
         scheme, _, token = authorization.partition(" ")
         try:
             if scheme.lower() != "bearer" or not token.strip():
@@ -157,8 +159,15 @@ def create_app(
         except InvalidToken:
             raise AuthError(401, "invalid_token", "The token is invalid or expired; log in again.") from None
 
-    def merchant(caller: Annotated[Principal, Depends(principal)]) -> Principal:
-        if caller.role != "merchant":
+    def principal(caller: Annotated[Principal | None, Depends(optional_principal)]) -> Principal:
+        """The verified caller; 401 without a token."""
+        if caller is None:
+            raise AuthError(401, "unauthorized", "Log in and send `Authorization: Bearer <token>`.")
+        return caller
+
+    def merchant(caller: Annotated[Principal | None, Depends(optional_principal)]) -> Principal | None:
+        """A Merchant, or None for an anonymous visitor (Knowledge only); operators are 403."""
+        if caller is not None and caller.role != "merchant":
             raise AuthError(403, "forbidden", "Only Merchants can use /chat.")
         return caller
 
@@ -241,8 +250,11 @@ def create_app(
     def chat(
         request: ChatRequest,
         background: BackgroundTasks,
-        caller: Annotated[Principal, Depends(merchant)],
+        caller: Annotated[Principal | None, Depends(merchant)],
     ):
+        if caller is None and request.conversation_id is not None:
+            raise AuthError(401, "unauthorized", "Conversations need a login: send `Authorization: Bearer <token>`.")
+        user_id = caller.sub if caller is not None else None  # None: anonymous visitor
         trace_id = uuid.uuid4().hex
         started = time.perf_counter()
 
@@ -250,7 +262,7 @@ def create_app(
             log_request(
                 privacy=get_log_privacy(),
                 trace_id=trace_id,
-                user_id=caller.sub,
+                user_id=user_id,
                 message=request.message,
                 latency_ms=round((time.perf_counter() - started) * 1000),
                 outcome=outcome,
@@ -264,7 +276,7 @@ def create_app(
             if app.state.graph is None:
                 app.state.graph = build_default_graph(app.state.index)
             result = app.state.graph.invoke(
-                {"message": request.message, "user_id": caller.sub}
+                {"message": request.message, "user_id": user_id}
             )
         except Exception as exc:
             if is_provider_error(exc):
@@ -284,7 +296,7 @@ def create_app(
         return ChatResponse(
             answer=result.get("answer", ""),
             intent=intent,
-            agent=agent_for(intent),
+            agent=agent_for(intent, anonymous=user_id is None),
             sources=result.get("sources", []),
             steps=result.get("steps", []),
             trace_id=trace_id,

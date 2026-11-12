@@ -5,12 +5,16 @@ A support assistant for Getnet merchants. It answers product questions from Getn
 ## Conversation
 
 **Message**:
-One piece of text a Merchant sends, with their login token. Handled independently; there is no conversation history.
+One piece of text a Merchant (with their login token) or an Anonymous visitor sends. Handled independently; there is no conversation history.
 _Avoid_: Query, prompt, request
 
 **Merchant**:
 A Getnet customer business, identified by a user id (e.g. `cliente1988`), that owns Terminals and receives Settlements. The Merchant is always the one named by the verified login token (its `sub`), never by the request body. Text inside a Message never changes who the Merchant is.
 _Avoid_: User, client, customer, lojista
+
+**Anonymous visitor**:
+Someone who sends a Message without a login token. There is no Merchant, so only the Knowledge Agent can answer: account questions get a fixed "log in to see your account" reply and the Customer Support Agent never runs. Nothing is remembered between their Messages. A bad token never makes someone an Anonymous visitor; it is rejected.
+_Avoid_: Guest, anonymous user, public user
 
 **Operator**:
 A Getnet staff member who logs in with role `operator` (not a Merchant). Operators cannot chat as a Merchant; their actions come with the human takeover.

@@ -53,6 +53,12 @@ jobs:
           done
           echo "/health did not return 200 within 300s"
           exit 1
+      - name: Anonymous empty /chat body returns 422
+        run: |
+          code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' -d '{}' "http://localhost:${PORT}/chat" || true)
+          echo "/chat {} without token -> $code"
+          [ "$code" = "422" ]
       - name: Logged-in empty /chat body returns 422
         run: |
           token=$(curl -s --max-time 10 -X POST -H 'Content-Type: application/json' \
