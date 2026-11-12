@@ -13,7 +13,8 @@ from app.support import load_merchants
 
 SECRET = "test-secret-at-least-32-bytes-long"
 NOW = datetime(2026, 11, 11, 12, 0, tzinfo=UTC)
-APP_JS = STATIC_DIR / "app.js"
+STATIC_FILES = sorted(p.name for p in STATIC_DIR.iterdir() if p.is_file())
+SCRIPTS = sorted(p.name for p in STATIC_DIR.glob("*.js"))
 
 
 def make_app(demo_login=True):
@@ -28,22 +29,32 @@ def test_root_serves_the_page():
     assert response.headers["content-type"].startswith("text/html")
     assert "<title>Merchant Support (demo)</title>" in response.text
     assert 'src="/static/app.js"' in response.text
+    # View scripts load before app.js, whose ROLE_VIEWS names their views.
+    assert response.text.index('src="/static/merchant.js"') < response.text.index('src="/static/app.js"')
     assert 'href="/static/style.css"' in response.text
     # Same-origin scripts only: no inline script, no CDN.
     assert "script-src" not in response.headers["content-security-policy"]
     assert "default-src 'self'" in response.headers["content-security-policy"]
 
 
-@pytest.mark.parametrize(("path", "content_type"), [
-    ("/static/app.js", "javascript"),
-    ("/static/style.css", "text/css"),
-])
-def test_assets_are_served(path, content_type):
-    response = TestClient(make_app()).get(path)
+CONTENT_TYPES = {".js": "javascript", ".css": "text/css", ".html": "text/html"}
+
+
+@pytest.mark.parametrize("name", STATIC_FILES)
+def test_assets_are_served(name):
+    response = TestClient(make_app()).get(f"/static/{name}")
 
     assert response.status_code == 200
-    assert content_type in response.headers["content-type"]
-    assert response.content == (STATIC_DIR / Path(path).name).read_bytes()
+    assert CONTENT_TYPES[Path(name).suffix] in response.headers["content-type"]
+    assert response.content == (STATIC_DIR / name).read_bytes()
+
+
+def test_every_script_is_loaded_by_the_page():
+    page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert {"app.js", "merchant.js"} <= set(SCRIPTS)
+    for name in SCRIPTS:
+        assert f'<script src="/static/{name}" defer></script>' in page, name
 
 
 def test_page_works_without_demo_login():
@@ -54,7 +65,7 @@ def test_page_works_without_demo_login():
 
 
 def test_page_loads_nothing_from_other_origins():
-    for name in ("index.html", "app.js", "style.css"):
+    for name in STATIC_FILES:
         text = (STATIC_DIR / name).read_text(encoding="utf-8")
         assert not re.search(r"""(src|href)\s*=\s*["']?(https?:)?//""", text), name
         assert "@import" not in text, name
@@ -113,8 +124,10 @@ def html_sink_violations(source: str) -> list[str]:
     return bad
 
 
-def test_app_js_writes_no_html_from_dynamic_values():
-    assert html_sink_violations(APP_JS.read_text(encoding="utf-8")) == []
+@pytest.mark.parametrize("name", SCRIPTS)
+def test_scripts_write_no_html_from_dynamic_values(name):
+    """Every app/static/*.js, so each new view script is covered without touching this test."""
+    assert html_sink_violations((STATIC_DIR / name).read_text(encoding="utf-8")) == []
 
 
 @pytest.mark.parametrize("line", [
