@@ -92,7 +92,9 @@ def log_request(
         trace_id=trace_id,
         user_ref=ANONYMOUS if user_id is None else privacy.user_ref(user_id),
         intent=intent,
-        agent=None if intent is None else agent_for(intent, anonymous=user_id is None),
+        agent=None if intent is None else agent_for(
+            intent, anonymous=user_id is None, escalated=user_id is not None and result.get("handoff") is not None
+        ),
         tools=[s for s in result.get("steps", []) if s not in NOT_TOOLS],
         tokens=result.get("tokens", 0),
         latency_ms=latency_ms,

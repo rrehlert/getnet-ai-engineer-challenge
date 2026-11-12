@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field, model_validator
 
-from app.graph import Evidence, Intent
+from app.graph import LOGIN_INTENTS, Evidence, Intent
 from app.observability import LogPrivacy, emit
 from app.router import INTENT_POLICY
 
@@ -77,16 +77,25 @@ ANSWER_RUBRICS = {
     "(Getnet products/fees and the Merchant's own account).",
 }
 
-# An anonymous visitor's account question gets the fixed login reply, not account data.
+# An escalated Turn (Intent `human` or a specialist's tool Escalation, ADR 0006): the reply is the
+# transfer message, and what matters is the Handoff Brief the Operator will act on.
+ESCALATION_RUBRIC = (
+    "This Turn was escalated to a human Operator. The Handoff Brief must be faithful to the Conversation "
+    "(the earlier Turns, the Message and the Evidence): no invented claims, amounts, dates or actions the "
+    "Agents did not take. The reply is the transfer message to the Merchant and must be in the Message's language."
+)
+
 ANONYMOUS_SUPPORT_RUBRIC = (
     "The visitor is not logged in, so the reply must give no account data and ask them to log in "
-    "to see their account, offering help with Getnet products meanwhile."
+    "to see their account or talk to an agent, offering help with Getnet products meanwhile."
 )
-ANONYMOUS_MERCHANT = "none (a visitor who is not logged in; account questions are still `support`)"
-# Without it the coverage Judge marks the login reply as leaving the account question unanswered.
+ANONYMOUS_MERCHANT = (
+    "none (a visitor who is not logged in; account questions are still `support`, requests for a person still `human`)"
+)
+# Without it the coverage Judge marks the login reply as leaving the question unanswered.
 ANONYMOUS_COVERAGE_RULE = (
-    "\n\nThe visitor is not logged in, so account data must not be given: for a `support` part, "
-    "asking them to log in fully answers it."
+    "\n\nThe visitor is not logged in, so account data must not be given and no person can take over: "
+    "for a `support` or `human` part, asking them to log in fully answers it."
 )
 
 ANSWER_PROMPT = """You judge a reply from Getnet merchant support.
@@ -127,10 +136,25 @@ def _route_input(message: str, intent: Intent, user_id: str | None = "", **_) ->
     return [("system", ROUTE_PROMPT), ("human", f"Merchant: {merchant}\nMessage: {message}\nIntent: {intent}")]
 
 
+def format_history(history: Sequence[dict]) -> str:
+    """Earlier Turns, oldest first, one per line."""
+    return "\n".join(f"{t['role']}: {t['content']}" for t in history) or "(none)"
+
+
 def _answer_input(
-    message: str, intent: Intent, answer: str, sources: list, evidence: Sequence[Evidence], user_id: str | None = "", **_
+    message: str,
+    intent: Intent,
+    answer: str,
+    sources: list,
+    evidence: Sequence[Evidence],
+    user_id: str | None = "",
+    handoff: dict | None = None,
+    history: Sequence[dict] = (),
+    **_,
 ) -> list[tuple[str, str]]:
-    if user_id is None and intent == "support":
+    if handoff is not None:
+        rubric = ESCALATION_RUBRIC
+    elif user_id is None and intent in LOGIN_INTENTS:
         rubric = ANONYMOUS_SUPPORT_RUBRIC
     else:
         rubric = ANSWER_RUBRICS.get(intent, ANSWER_RUBRICS["knowledge"])
@@ -139,6 +163,12 @@ def _answer_input(
         f"Sources: {json.dumps(sources, ensure_ascii=False)}\n"
         f"Evidence: {format_evidence(evidence)}"
     )
+    if handoff is not None:
+        # The Conversation the brief must be faithful to, then the brief itself.
+        human = (
+            f"Earlier Turns:\n{format_history(history)}\n\n{human}\n"
+            f"Handoff Brief: {json.dumps(handoff, ensure_ascii=False)}"
+        )
     return [("system", ANSWER_PROMPT.format(intent=intent, rubric=rubric)), ("human", human)]
 
 
@@ -168,10 +198,14 @@ def run_judges(
     sources: list,
     evidence: Sequence[Evidence],
     user_id: str | None = "",
+    handoff: dict | None = None,
+    history: Sequence[dict] = (),
 ) -> dict[str, Verdict]:
     """Run every Judge Type, log one line each, and return the verdicts by Judge Type.
 
-    `user_id` None means an anonymous visitor (not logged in).
+    `user_id` None means an anonymous visitor (not logged in). `handoff` is the Handoff Brief
+    of an escalated Turn: the `answer` Judge then uses the escalation rubric and checks the
+    brief against `history` (the earlier Turns). Neither is logged.
 
     A Judge that fails is logged as an error and left out of the result.
     """
@@ -187,6 +221,8 @@ def run_judges(
                     sources=sources,
                     evidence=evidence,
                     user_id=user_id,
+                    handoff=handoff,
+                    history=history,
                 )
             )
             if not isinstance(verdict, schema):

@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/rrehlert/getnet-ai-engineer-challenge/actions/workflows/ci.yml/badge.svg)](https://github.com/rrehlert/getnet-ai-engineer-challenge/actions/workflows/ci.yml)
 
-A containerized multi-agent support assistant for Getnet merchants. A **Router Agent** classifies each Message by Intent. It then hands the Message to a **Knowledge Agent** (RAG over Getnet's public site plus web search) or a **Customer Support Agent** (tools over mock account data), or refuses it itself.
+A containerized multi-agent support assistant for Getnet merchants. A **Router Agent** classifies each Message by Intent. It then hands the Message to a **Knowledge Agent** (RAG over Getnet's public site plus web search) or a **Customer Support Agent** (tools over mock account data), or refuses it itself. When the bot can't help, or the Merchant asks for a person, a fourth agent, the **Escalator Agent**, writes a Handoff Brief and hands the Conversation to a human **Operator** ([Human takeover](#human-takeover)).
 
 Domain vocabulary is in [`GLOSSARY.md`](GLOSSARY.md). Architecture decisions are in [`docs/adr/`](docs/adr/). The spec and tickets are in [`.scratch/getnet-multi-agent/`](.scratch/getnet-multi-agent/).
 
-After the evaluation, an improvement run fixed several weak spots (Judge Evidence and model, scenario facts, log privacy, container, CI). Its specs are [`.scratch/improvement-fixes/`](.scratch/improvement-fixes/) and [`.scratch/eval-expansion/`](.scratch/eval-expansion/) (the [eval runner](#eval-runner)), and its clock, sessions and decisions are in [`IMPROVEMENT_RUN_DIARY.md`](IMPROVEMENT_RUN_DIARY.md).
+After the evaluation, an improvement run fixed several weak spots (Judge Evidence and model, scenario facts, log privacy, container, CI). Its specs are [`.scratch/improvement-fixes/`](.scratch/improvement-fixes/), [`.scratch/eval-expansion/`](.scratch/eval-expansion/) (the [eval runner](#eval-runner)), [`.scratch/conversations-identity/`](.scratch/conversations-identity/) and [`.scratch/human-takeover/`](.scratch/human-takeover/), and its clock, sessions and decisions are in [`IMPROVEMENT_RUN_DIARY.md`](IMPROVEMENT_RUN_DIARY.md).
 
 ## Quick start
 
@@ -62,6 +62,35 @@ docker compose logs --tail 0 -f --no-log-prefix api | jq -R 'fromjson? // empty 
 
 Details are under [Overview](#overview) (Identity, Conversations) and [Privacy](#privacy).
 
+## Human takeover
+
+The challenge's bonus: a fourth agent that requests help from a human Operator. Design: [ADR 0006](docs/adr/0006-human-takeover-via-conversation-mode.md); spec and tickets: [`.scratch/human-takeover/`](.scratch/human-takeover/).
+
+- **Modes.** Each Conversation has a Mode: `bot` → `waiting_human` (Escalation) → `human` (an Operator claims it) → back to `bot` (handback) or `closed`. A `waiting_human` Conversation can also be closed without a claim (spam, Merchant gave up). Any other transition → 409.
+- **Escalation**, two ways, logged-in Merchants only:
+  - the Merchant asks for a person: the Router classifies Intent `human`;
+  - a specialist decides it can't resolve the case and calls `escalate_to_human(reason)`: the agent loop stops on the call and its draft is discarded. The prompts make this a last resort (an action only a person can take, the Merchant still stuck after the bot's answer, a human decision); a question the bot can answer even in part is answered. A Merchant missing from the fixture still has this tool, as their only one.
+- **Escalator Agent** (`app/escalator.py`): one structured call, no tools. It reads the recent history, the escalation reason, the Intent and the Turn's Evidence and Sources, and writes the **Handoff Brief** (`reason`, `customer_ask`, `summary`, `attempted`, `category`, `priority` low/normal/high, `language`, `suggested_reply`) plus a short transfer message in the Merchant's language (fixed bilingual fallback if missing or unparseable). `/chat` then, in one transaction, stores the Turns, opens a **Handoff** with the brief and sets Mode `waiting_human`; the reply has `agent: escalator` and `mode: waiting_human`. The brief is stored, never logged or returned to the Merchant.
+- **While not in `bot` Mode the graph doesn't run.** In `waiting_human`/`human`, `/chat` stores the Message as a `user` Turn and returns `answer: ""`, `intent`/`agent` null (log outcome `queued`, no Judges); a `closed` Conversation → 409 `conversation_closed`. Every `/chat` reply and the Turns listing carry `mode`; the Merchant polls `GET /conversations/{id}/turns?after=<turn id>` for Operator replies. Writes are conditional on the Mode read, so a lost race is a 409 (`mode_changed`), never a bot answer in a taken-over Conversation.
+- **Anonymous visitors** asking for a person get the login reply ("log in to see your account or talk to an agent"), as for account questions; nothing is stored.
+- **Operator API** (`app/operator.py`), role `operator` only (no token 401, Merchant 403). Operators see only Conversations that had a Handoff or carry a Review flag; any other id → 404. Mock Operators: `operador1`, `operador2`.
+
+  ```
+  GET  /operator/queue                          waiting_human, oldest first: category, priority, customer_ask, created_at
+  GET  /operator/review                         Review-flagged Conversations (any Mode), newest first
+  GET  /operator/conversations/{id}             Turns, current Handoff Brief, Mode, claim, Review flag, Merchant's account from the fixture
+  POST /operator/conversations/{id}/claim       waiting_human → human (atomic; second claim → 409); refreshes the brief if the Merchant wrote more
+  POST /operator/conversations/{id}/reply       {content, used_suggestion}; claiming Operator only, stored as an `operator` Turn
+  POST /operator/conversations/{id}/handback    human → bot; claiming Operator only; stores a fixed bilingual "back with the virtual assistant" Turn
+  POST /operator/conversations/{id}/close       claiming Operator in human, any Operator in waiting_human; stores a fixed "closed" Turn
+  POST /operator/conversations/{id}/reviewed    clears the Review flag
+  ```
+
+  Wrong Mode → 409 (`not_waiting`, `wrong_mode`); another Operator's claim → 403 (`not_claimer`). Account data comes from `data/merchants.json` by software, never from the model.
+- **After handback** the bot sees Operator Turns in its history as assistant messages prefixed `[Human agent]`, so follow-ups continue in context.
+- **Audit.** Every Operator action (`claim`, `reply` with `used_suggestion`, `handback`, `close`, `reviewed`) is an `audit` row: operator, action, conversation id, time. No message text or brief. Reads aren't audited. The retention purge deletes Handoffs with their Conversation and keeps audit rows.
+- **Quality.** On an escalated Turn the `answer` Judge uses an escalation rubric (brief faithful to the Conversation, no invented claims; transfer message in the Merchant's language) and sees the brief. An `answer` Judge Score below 0.7 sets the Conversation's **Review flag** (no Mode change); route and coverage scores never do. Operator replies never go through `/chat`, so no Judge scores them.
+
 ## Overview
 
 ```
@@ -72,19 +101,25 @@ GET  /conversations, GET /conversations/{id}/turns?after=<turn id>        (Merch
         ▼
   Router Agent ── one structured LLM call → Intent + (refusal reply)
         │
-        ├─ knowledge   → Knowledge Agent        → search_corpus (RAG) / web_search
-        ├─ support     → Customer Support Agent → get_settlement_schedule / get_terminal_status / get_recent_transactions
-        │                (anonymous: → login node, fixed PT + EN "log in to see your account" reply)
+        ├─ knowledge   → Knowledge Agent        → search_corpus (RAG) / web_search ─────────────┐
+        ├─ support     → Customer Support Agent → get_settlement_schedule / get_terminal_status │
+        │                                          / get_recent_transactions ───────────────────┤
+        │                (anonymous: → login node, fixed PT + EN "log in" reply)               │ escalate_to_human(reason)
+        ├─ human       → Escalator Agent ◄──────────────────────────────────────────────────────┘ (Merchants only)
+        │                → Handoff Brief + transfer message; Mode waiting_human
+        │                (anonymous: → login node)
         └─ unsupported → END (the Router's own refusal, in the Message's language)
         │
         ▼
-{answer, intent, agent, sources, steps, trace_id, conversation_id}
+{answer, mode, intent, agent, sources, steps, trace_id, conversation_id}
+
+Mode waiting_human / human: the graph doesn't run; Messages are stored for the Operator (see Human takeover).
 ```
 
 Every Agent sees the Conversation's last 10 Turns as `history` before the current Message (see Conversations below).
 
 - **Identity** (`app/auth.py`, [ADR 0005](docs/adr/0005-identity-from-verified-token.md)). The Merchant comes only from a verified token, never from the request body.
-  - `POST /dev/login {user_id}` returns `{access_token, token_type}`: an HS256 JWT (PyJWT) with `sub`, `role` (`merchant` or `operator`) and `exp` (1 hour), signed with `JWT_SECRET`. It is a "log in as" stand-in for an identity provider and proves nothing about the caller, so it exists only with `DEMO_LOGIN=true` (compose sets it; the default is off, and then it is 404). Ids in the fixture and unknown ids log in as Merchants (an unknown one gets the "account not found" reply); the mock operator `operador1` gets role `operator`.
+  - `POST /dev/login {user_id}` returns `{access_token, token_type}`: an HS256 JWT (PyJWT) with `sub`, `role` (`merchant` or `operator`) and `exp` (1 hour), signed with `JWT_SECRET`. It is a "log in as" stand-in for an identity provider and proves nothing about the caller, so it exists only with `DEMO_LOGIN=true` (compose sets it; the default is off, and then it is 404). Ids in the fixture and unknown ids log in as Merchants (an unknown one gets the "account not found" reply); the mock Operators `operador1` and `operador2` get role `operator`.
   - Requests carry `Authorization: Bearer <token>`. Invalid or expired token → 401 (`invalid_token`), never downgraded to anonymous; an operator token on `/chat` → 403. A `user_id` in the `/chat` body is ignored. `GET /me` without a token → 401 (`unauthorized`).
   - **Anonymous visitors.** `/chat` without a token runs the graph with no Merchant (`user_id` None) and the Router prompt says the visitor is not logged in. `knowledge` and `unsupported` work as for a Merchant; `support` goes to a deterministic `login` node that returns a fixed bilingual "log in to see your account" reply (`agent` `router`, `steps` `["router", "login"]`), so the Customer Support Agent never runs. Anonymous requests are stateless: no Conversation is created and nothing is stored (`conversation_id` is null in the reply), and a `conversation_id` without a token → 401 (`unauthorized`). The request log's `user_ref` is `anonymous`.
   - `GET /me` returns `{sub, role}` and, for a Merchant, `account`: their fixture profile and data (null when they have no account).
@@ -92,11 +127,11 @@ Every Agent sees the Conversation's last 10 Turns as `history` before the curren
 - **Conversations** (`app/store.py`, [ADR 0004](docs/adr/0004-sqlite-single-store.md)). A Merchant's Messages are kept as Conversations of Turns in SQLite (WAL mode), the single store; no LangGraph checkpointer.
   - `/chat` without `conversation_id` starts a new Conversation owned by the token's `sub` and returns its id (a random UUID); with it, the Message is appended to that Conversation. An unknown id and another Merchant's id are the same 404 (`conversation_not_found`), and the graph doesn't run.
   - After a successful graph run, the user Turn and the assistant Turn (reply, Intent, Sources) are stored together; a failed run stores nothing. Raw tool output and Evidence are never stored.
-  - Tables: `conversations` (`id`, `owner`, `created_at`, `updated_at`, `mode` = `bot`, for the future human takeover, [ADR 0006](docs/adr/0006-human-takeover-via-conversation-mode.md)) and `turns` (monotonic `id`, `conversation_id`, `role` `user`/`assistant`/`operator`, `content`, `intent`, `sources`, `created_at`).
+  - Tables: `conversations` (`id`, `owner`, `created_at`, `updated_at`, `mode`, `needs_review`; see [Human takeover](#human-takeover) and [ADR 0006](docs/adr/0006-human-takeover-via-conversation-mode.md)), `turns` (monotonic `id`, `conversation_id`, `role` `user`/`assistant`/`operator`, `content`, `intent`, `sources`, `created_at`), `handoffs` (brief, claim, outcome; one open per Conversation) and `audit`.
   - Retention: at startup only (no periodic job, so a long-running process doesn't purge until it restarts), Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted with their Turns; only the count is logged.
   - `GET /conversations` → `{conversations: [{id, created_at, updated_at, mode}]}`: the caller's Conversations, most recently updated first.
-  - `GET /conversations/{id}/turns?after=<turn id>` → `{conversation_id, turns: [{id, role, content, intent, sources, created_at}]}`: Turns oldest first; with `after`, only Turns with a larger id (to poll for new ones; default `0` = all, negative → 422). Another Merchant's id and an unknown id are the same 404 (`conversation_not_found`) as `/chat`.
-  - Both need a Merchant token: no token → 401 (`unauthorized`), invalid token → 401 (`invalid_token`), operator token → 403 (`forbidden`; operator endpoints come with the human takeover). Timestamps are ISO 8601 UTC.
+  - `GET /conversations/{id}/turns?after=<turn id>` → `{conversation_id, mode, turns: [{id, role, content, intent, sources, created_at}]}`: Turns oldest first; with `after`, only Turns with a larger id (to poll for new ones; default `0` = all, negative → 422). Another Merchant's id and an unknown id are the same 404 (`conversation_not_found`) as `/chat`.
+  - Both need a Merchant token: no token → 401 (`unauthorized`), invalid token → 401 (`invalid_token`), operator token → 403 (`forbidden`; Operators use the [Operator API](#human-takeover)). Timestamps are ISO 8601 UTC.
   - **History.** Before the graph runs, the last 10 Turns of the Conversation (role + text, oldest first) go into graph state as `history`; a new Conversation and an anonymous visitor have none. The Router and both specialists get them as chat messages before the current Message (`user` Turns as the human side, `assistant`/`operator` as the assistant side), so "My card machine is offline" then "It's the Smart one" is routed to Customer Support and answered in context. The Router prompt says to classify the latest Message in the light of the history. History is context only: no tool calls or Evidence are replayed, and account facts always come from fresh tool calls.
 - **Orchestration.** A LangGraph `StateGraph` (`app/graph.py`) with conditional edges on `state["intent"]`. `build_graph(route_fn, knowledge, support)` takes each agent as a plain callable, so tests inject fakes.
 - **Router Agent** (`app/router.py`). One `with_structured_output(Route, method="function_calling", include_raw=True)` call.
@@ -107,7 +142,7 @@ Every Agent sees the Conversation's last 10 Turns as `history` before the curren
 - **Knowledge Agent** (`app/knowledge.py`). A LangChain `create_agent` with `search_corpus` and `web_search` (Tavily, with DuckDuckGo as fallback), a tool-call limit of 4, and a dynamic prompt that includes today's date. It queries the Corpus in Portuguese and grounds every claim. **Sources come only from tool artifacts**, never from text the model writes.
 - **Customer Support Agent** (`app/support.py`). A `create_agent` over `data/merchants.json` (mock merchants `cliente1988` and `cliente2024`). Dates in the data are relative to today, so "yesterday" always has data.
   - `user_id` reaches the tools through `ToolRuntime` context and is never a tool argument.
-  - Unknown users get an agent with no tools.
+  - Unknown users get an agent with no account tools; `escalate_to_human` is its only tool.
 - **RAG pipeline** (`scripts/fetch_corpus.py` → `app/rag.py` → `app/knowledge.py`):
   1. **Ingestion:** 68 curated pages (list in `PAGES` in `scripts/fetch_corpus.py`):
      - 5 from the suggested [getnet.net/en](https://www.getnet.net/en) (home and the 4 "our solutions" pages);
@@ -203,7 +238,7 @@ Tool outputs (account data) are never logged. The mock fixture itself holds mock
 **Implemented:**
 - One structured JSON log line per request, with a `trace_id` that is also returned to the client.
 - Three online LLM Judges (`route`, `answer`, `coverage`) that score live traffic in the background, on a model from a different family than the reply model. The `answer` Judge rates the reply against the Evidence; `coverage` detects Mixed questions and incomplete replies. A score below 0.7 is logged at WARNING.
-- One shared labelled dataset, [`evals/scenarios.json`](evals/scenarios.json): 17 Messages with expected Intents, 11 with expected facts, 4 Mixed questions. Used by the live smoke script (`scripts/scenarios.py`) and the in-process [eval runner](#eval-runner).
+- One shared labelled dataset, [`evals/scenarios.json`](evals/scenarios.json): 22 Messages with expected Intents (3 takeover ones also with an expected `agent`), 13 with expected facts, 4 Mixed questions. Used by the live smoke script (`scripts/scenarios.py`) and the in-process [eval runner](#eval-runner).
 - The [eval runner](#eval-runner): every scenario several times, Judges run synchronously with Evidence, aggregate scores per Intent and overall, the multi-intent Router threshold, retrieval recall@4, and a committed baseline that every run is compared against.
 - CI on every push and pull request: the test suite and a container smoke test.
 
@@ -319,6 +354,34 @@ curl -s localhost:8000/chat -H 'content-type: application/json' \
 # Invalid token: 401, never treated as anonymous
 curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer not-a-token" \
   -d '{"message": "hi"}'
+```
+
+Human takeover, two terminals (Merchant and Operator):
+
+```bash
+# Merchant: ask for a person → transfer message, agent "escalator", mode "waiting_human"
+TOKEN=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' -d '{"user_id": "cliente1988"}' | jq -r .access_token)
+CID=$(curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d '{"message": "Quero falar com um atendente humano, por favor."}' | jq -r .conversation_id)
+# Merchant: keeps writing while waiting → stored for the Operator, answer "" (queued)
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d "$(jq -n --arg c "$CID" '{message: "Foi uma venda de R$ 250 no crédito.", conversation_id: $c}')"
+
+# Operator: queue, claim (brief refreshed with the new Message), reply
+OP=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' -d '{"user_id": "operador1"}' | jq -r .access_token)
+curl -s localhost:8000/operator/queue -H "authorization: Bearer $OP"
+curl -s -X POST localhost:8000/operator/conversations/$CID/claim -H "authorization: Bearer $OP" | jq .handoff.brief
+curl -s -X POST localhost:8000/operator/conversations/$CID/reply -H 'content-type: application/json' -H "authorization: Bearer $OP" \
+  -d '{"content": "Olá! A venda no crédito de ontem cai em D+30.", "used_suggestion": false}'
+
+# Merchant: poll for new Turns (mode "human", the operator Turn)
+curl -s "localhost:8000/conversations/$CID/turns?after=3" -H "authorization: Bearer $TOKEN"
+
+# Operator: hand back to the bot (or close: POST .../close)
+curl -s -X POST localhost:8000/operator/conversations/$CID/handback -H "authorization: Bearer $OP" | jq .mode
+# Merchant: the bot answers again, with the Operator's reply in its history
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d "$(jq -n --arg c "$CID" '{message: "Então quando exatamente esse dinheiro cai?", conversation_id: $c}')"
 ```
 
 Example response:
@@ -527,15 +590,17 @@ The README (`11`, `12`) and the video came after the timebox.
 - ~~**Judges and anonymous visitors:** the `coverage` Judge wasn't told the visitor is anonymous, so it scored the login reply as unanswered (0.2–0.3).~~ **Fixed:** it now gets the Merchant line and a rule that, for an anonymous visitor, asking them to log in fully answers a `support` part (live: 0.2 → 1.0).
 - **Identity:** the Merchant comes from a verified JWT, but tokens are issued by a demo "log in as" endpoint, not a real identity provider; no refresh or revocation.
 - **Get Clássica:** the Corpus has little on it, so comparing it with Get Smart is weak.
-- **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it.
+- **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it. Since the human takeover, the Knowledge Agent sometimes escalates on that miss instead of saying it couldn't find the answer.
 - **Sources:** they can be noisy (every Chunk above the threshold from every search), so filter them to the ones the answer uses.
 - **`steps`:** it counts tool calls that the limit blocked.
 - ~~**Answer Judge vs. web search:** the Judge sees only the answer and the Source URLs/titles, not what the tools returned, and runs on the same model that wrote the reply.~~ **Fixed** in the improvement run: the `answer` Judge now rates the reply against the Evidence (capped tool output), and `JUDGE_MODEL` defaults to a different model family. Remaining: the Judges are not calibrated against human labels.
 - ~~**Semantic quality:** Judge Scores existed only as single log lines, with no aggregate, baseline or repeated runs.~~ **Closed** in the improvement run by the [eval runner](#eval-runner): aggregate Judge Scores per Intent, a committed baseline with deltas, the `coverage` Judge and recall@4.
 - **Multi-intent Router:** the baseline meets the agreed threshold (24% Mixed questions, 92% of them incomplete), so a Router that can hand one Message to both specialists is justified but not built yet.
 - **Chroma:** old hash-named collections are never pruned.
+- **Lint:** ruff isn't a project dependency (run it with `uvx ruff check`), and with its default rules the code has 28 findings, all already on `main` before the human takeover.
 - **Conversations:** the Agents see only the last 10 Turns (no summary of older ones); whether real models resolve follow-ups well is checked live, not by the eval runner (its scenarios are single Messages with empty history).
 - **Out of scope:** real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
+- ~~**Human Escalation Agent (designed, not built).**~~ **Built** in the improvement run: the [Escalator Agent and human takeover](#human-takeover). Not built: an Operator UI (curl only), push delivery (the Merchant polls), routing to Operators by skill, SLAs and notifications, approval-style HITL.
+- **Takeover limits:** `used_suggestion` is reported by the client, not checked against the brief's `suggested_reply`; the `suggested_reply` sometimes reads like a transfer note rather than an answer the Operator would send; a brief rewritten on claim doesn't see the original Turn's Evidence (not stored); the `coverage` Judge sees only the transfer message on an escalated Turn, so it can score it low.
 - **Other bonuses (designed, not built):**
-  - a Human Escalation Agent and handoff: a fourth graph node, triggered by a low-confidence Router, a low answer Judge Score or an explicit user request;
   - the dashboards, alerts and golden-set regression runs described in [Evaluation and observability strategy](#evaluation-and-observability-strategy).

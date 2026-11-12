@@ -12,11 +12,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.auth import AuthSettings, InvalidToken, Principal
-from app.graph import HISTORY_TURNS, Agent, Intent, Source, agent_for, build_graph
-from app.judge import run_judges
+from app.errors import AuthError
+from app.errors import error_response as _error
+from app.graph import HISTORY_TURNS, Agent, Intent, Node, Source, agent_for, build_graph
+from app.judge import FLAG_BELOW, run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy, log_request, setup_logging
-from app.store import Mode, NewTurn, Role, Store
+from app.operator import operator_router
+from app.store import Mode, ModeChanged, NewTurn, Role, Store
 
 log = logging.getLogger(__name__)
 
@@ -40,8 +43,10 @@ class LoginResponse(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
-    intent: Intent
-    agent: Agent
+    # Who answers this Conversation now (ADR 0006); outside `bot` the graph did not run, so no Intent or Agent.
+    mode: Mode
+    intent: Intent | None
+    agent: Agent | None
     sources: list[Source]
     steps: list[str]
     trace_id: str
@@ -70,6 +75,7 @@ class TurnOut(BaseModel):
 
 class TurnList(BaseModel):
     conversation_id: str
+    mode: Mode
     turns: list[TurnOut]
 
 
@@ -82,7 +88,8 @@ def load_default_index():
 
 
 def build_default_graph(index):
-    """The production graph: Router, Knowledge and Customer Support Agents."""
+    """The production graph: Router, Knowledge, Customer Support and Escalator Agents."""
+    from app.escalator import make_escalator
     from app.knowledge import default_web_search, make_knowledge, make_search_corpus
     from app.llm import make_chat_model
     from app.router import make_router
@@ -95,21 +102,9 @@ def build_default_graph(index):
         make_search_corpus(index, settings.relevance_threshold),
         default_web_search(settings.tavily_api_key),
     ]
-    return build_graph(make_router(model), make_knowledge(model, tools), make_support(model))
-
-
-def _error(status: int, code: str, message: str, trace_id: str, headers: dict | None = None) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        content={"error": {"code": code, "message": message}, "trace_id": trace_id},
-        headers=headers,
+    return build_graph(
+        make_router(model), make_knowledge(model, tools), make_support(model), escalator=make_escalator(model)
     )
-
-
-class AuthError(Exception):
-    def __init__(self, status: int, code: str, message: str):
-        super().__init__(message)
-        self.status, self.code, self.message = status, code, message
 
 
 def create_app(
@@ -120,6 +115,7 @@ def create_app(
     log_privacy: LogPrivacy | None = None,
     auth: AuthSettings | None = None,
     store: Store | None = None,
+    escalator: Node | None = None,
 ) -> FastAPI:
     """`graph` is anything with `.invoke(state) -> state`; built lazily if omitted.
 
@@ -136,6 +132,9 @@ def create_app(
 
     `store` (Conversations and Turns) defaults to the SQLite file in `STATE_DIR`,
     resolved at startup like `log_privacy`.
+
+    `escalator` (the Escalator Agent that rewrites a stale Handoff Brief on an
+    Operator's claim) defaults to one on `LLM_MODEL`, built on first use.
 
     `load_index` runs in a background thread at startup; until it returns,
     `/health` and `/chat` answer 503. Without it there is no index to wait for.
@@ -170,6 +169,16 @@ def create_app(
     app.state.log_privacy = log_privacy
     app.state.auth = auth
     app.state.store = store
+    app.state.escalator = escalator
+
+    def get_escalator() -> Node:
+        if app.state.escalator is None:
+            from app.escalator import make_escalator
+            from app.llm import make_chat_model
+            from app.settings import get_settings
+
+            app.state.escalator = make_escalator(make_chat_model(get_settings()))
+        return app.state.escalator
 
     def get_store() -> Store:
         if app.state.store is None:
@@ -253,13 +262,18 @@ def create_app(
             app.state.judge_model = make_chat_model(settings, settings.judge_model)
         return app.state.judge_model
 
-    def judge(trace_id: str, message: str, result: dict) -> None:
+    def judge(
+        trace_id: str, message: str, result: dict, history: list[dict],
+        brief: dict | None, conversation_id: str | None,
+    ) -> None:
+        """Runs after the reply is sent. `brief`: the Handoff Brief of an escalated Turn.
+        `conversation_id`: where a low `answer` Score sets the Review flag (None for anonymous)."""
         try:
             model = get_judge_model()
         except Exception:
             log.exception("judge model unavailable trace_id=%s", trace_id)
             return
-        run_judges(
+        verdicts = run_judges(
             model,
             privacy=get_log_privacy(),
             trace_id=trace_id,
@@ -269,7 +283,17 @@ def create_app(
             sources=result.get("sources", []),
             evidence=result.get("evidence", []),
             user_id=result.get("user_id", ""),
+            # An escalated Turn: the brief is judged (stored, never logged) against the Conversation.
+            handoff=brief,
+            history=history,
         )
+        answer = verdicts.get("answer")
+        # Only the `answer` Score flags; never a Mode change, never blocks the Merchant (ADR 0006).
+        if conversation_id is not None and answer is not None and answer.score < FLAG_BELOW:
+            try:
+                get_store().flag_for_review(conversation_id)
+            except Exception:
+                log.exception("review flag not set trace_id=%s", trace_id)
 
     def ready() -> bool:
         return not app.state.needs_index or app.state.index is not None
@@ -320,14 +344,41 @@ def create_app(
                 conversation_id=conversation_id,
             )
 
+        def mode_changed(exc: ModeChanged) -> JSONResponse:
+            """A racing request changed the Mode after it was read: 409, nothing stored (ADR 0006)."""
+            if exc.mode == "closed":
+                log_outcome("conversation_closed")
+                return _error(409, "conversation_closed", "This Conversation is closed; start a new one.", trace_id)
+            log_outcome("mode_changed")
+            return _error(
+                409, "mode_changed", "The Conversation's Mode changed while this Message was handled; send it again.",
+                trace_id,
+            )
+
         if not ready():
             log_outcome("starting")
             return _error(503, "starting", "The service is starting; try again shortly.", trace_id)
         # Someone else's Conversation looks exactly like one that doesn't exist.
         # (An anonymous request never gets here with a conversation_id: that was a 401 above.)
-        if conversation_id is not None and get_store().conversation(conversation_id, user_id or "") is None:
+        conversation = None if conversation_id is None else get_store().conversation(conversation_id, user_id or "")
+        if conversation_id is not None and conversation is None:
             log_outcome("conversation_not_found")
             return _error(404, "conversation_not_found", "Conversation not found.", trace_id)
+        if conversation is not None and conversation.mode == "closed":
+            log_outcome("conversation_closed")
+            return _error(409, "conversation_closed", "This Conversation is closed; start a new one.", trace_id)
+        if conversation is not None and conversation.mode in ("waiting_human", "human"):
+            # Taken over (ADR 0006): kept for the Operator; no Agent answers, no Judges.
+            try:
+                get_store().append_turns(conversation.id, [NewTurn("user", request.message)],
+                                         while_in=("waiting_human", "human"))
+            except ModeChanged as exc:
+                return mode_changed(exc)
+            log_outcome("queued")
+            return ChatResponse(
+                answer="", mode=conversation.mode, intent=None, agent=None, sources=[], steps=[],
+                trace_id=trace_id, conversation_id=conversation.id,
+            )
         # Prior Turns as context for the Agents (role + text only; account facts come from fresh tool calls).
         history = [] if conversation_id is None else [
             {"role": t.role, "content": t.content} for t in get_store().turns(conversation_id)[-HISTORY_TURNS:]
@@ -350,22 +401,39 @@ def create_app(
             return _error(500, "internal_error", "Internal server error.", trace_id)
 
         intent = result["intent"]
+        # An Escalation (ADR 0006): the graph never escalates an anonymous visitor.
+        brief = result.get("handoff") if user_id is not None else None
         # Only after a successful run, so a failed one stores nothing. Sources, never Evidence.
         # Anonymous requests are stateless: no Conversation, nothing stored.
         if user_id is not None:
-            if conversation_id is None:
-                conversation_id = get_store().create_conversation(user_id)
-            get_store().append_turns(conversation_id, [
+            turns = [
                 NewTurn("user", request.message, intent=intent),
                 NewTurn("assistant", result.get("answer", ""), intent=intent, sources=result.get("sources", [])),
-            ])
+            ]
+            # Each write is conditional on the `bot` Mode read above: a racing Escalation or
+            # Operator action since then means 409 and nothing stored.
+            try:
+                if brief is not None:
+                    # One transaction: Turns, the open Handoff (the brief is stored, never logged), Mode waiting_human.
+                    conversation_id = get_store().escalate(conversation_id, user_id, turns, brief)
+                elif conversation_id is None:
+                    conversation_id = get_store().create_conversation(user_id)
+                    get_store().append_turns(conversation_id, turns)
+                else:
+                    get_store().append_turns(conversation_id, turns, while_in=("bot",))
+            except ModeChanged as exc:
+                return mode_changed(exc)
         log_outcome("ok", result)
         if judges_on():
-            background.add_task(judge, trace_id, request.message, result)
+            background.add_task(
+                judge, trace_id, request.message, result, history, brief,
+                None if user_id is None else conversation_id,
+            )
         return ChatResponse(
             answer=result.get("answer", ""),
+            mode="bot" if brief is None else "waiting_human",
             intent=intent,
-            agent=agent_for(intent, anonymous=user_id is None),
+            agent=agent_for(intent, anonymous=user_id is None, escalated=brief is not None),
             sources=result.get("sources", []),
             steps=result.get("steps", []),
             trace_id=trace_id,
@@ -393,13 +461,18 @@ def create_app(
         after: Annotated[int, Query(ge=0, description="Only Turns with a larger id (for polling).")] = 0,
     ):
         """The Conversation's Turns, oldest first; another Merchant's or an unknown id is the same 404 as /chat."""
-        if get_store().conversation(conversation_id, caller.sub) is None:
+        conversation = get_store().conversation(conversation_id, caller.sub)
+        if conversation is None:
             return _error(404, "conversation_not_found", "Conversation not found.", uuid.uuid4().hex)
-        return TurnList(conversation_id=conversation_id, turns=[
+        return TurnList(conversation_id=conversation_id, mode=conversation.mode, turns=[
             TurnOut(id=t.id, role=t.role, content=t.content, intent=t.intent,
                     sources=[Source(url=s["url"], title=s["title"]) for s in t.sources], created_at=t.created_at)
             for t in get_store().turns(conversation_id, after=after)
         ])
+
+    app.include_router(operator_router(
+        principal=principal, store=get_store, today=lambda: get_auth().clock().date(), escalator=get_escalator,
+    ))
 
     return app
 

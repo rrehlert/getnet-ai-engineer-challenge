@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.graph import agent_for
 from app.judge import JUDGES, run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy
@@ -49,7 +50,7 @@ BUILD_ROUTER = "build multi-intent Router"
 NOT_JUSTIFIED = "not justified"
 
 # A run record (JSON-ready dict): scenario (id), index, run, message, expected_intent,
-# intents_needed (dataset label), intent, answer, routing_ok, facts_ok, missing_facts,
+# intents_needed (dataset label), intent, agent, answer, routing_ok, facts_ok, missing_facts,
 # verdicts {Judge Type: verdict dict}, tokens, latency_ms, error (None, or why the graph failed).
 Record = dict
 
@@ -198,6 +199,7 @@ def _run_once(graph: Any, judge_model: Any, privacy: LogPrivacy, index: int, run
         "expected_intent": scenario.intent,
         "intents_needed": scenario.intents_needed,
         "intent": None,
+        "agent": None,
         "answer": None,
         "verdicts": {},
         "tokens": 0,
@@ -211,11 +213,16 @@ def _run_once(graph: Any, judge_model: Any, privacy: LogPrivacy, index: int, run
         record["error"] = provider_error_code(exc) if is_provider_error(exc) else f"error: {exc!r}"
         result = {}
     record["latency_ms"] = round((time.perf_counter() - started) * 1000)
+    if record["error"] is None:
+        # As `/chat` reports it: the Escalator for an escalated Turn, the Router for refusals/login.
+        result["agent"] = agent_for(
+            result["intent"], anonymous=scenario.user_id is None, escalated=result.get("handoff") is not None
+        )
     check = check_reply(result, scenario)
     record.update(routing_ok=check.routing_ok, facts_ok=check.facts_ok, missing_facts=check.missing_facts)
     if record["error"] is None:
         intent, answer = result["intent"], result.get("answer", "")
-        record.update(intent=intent, answer=answer, tokens=result.get("tokens", 0))
+        record.update(intent=intent, agent=result["agent"], answer=answer, tokens=result.get("tokens", 0))
         verdicts = run_judges(
             judge_model,
             privacy=privacy,
@@ -226,6 +233,7 @@ def _run_once(graph: Any, judge_model: Any, privacy: LogPrivacy, index: int, run
             sources=result.get("sources", []),
             evidence=result.get("evidence", []),
             user_id=scenario.user_id,
+            handoff=result.get("handoff"),
         )
         record["verdicts"] = {judge_type: v.model_dump() for judge_type, v in verdicts.items()}
     return record

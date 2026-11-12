@@ -5,7 +5,8 @@ BASE_URL defaults to $API_BASE_URL, then http://localhost:8000.
 Logs in as each scenario's user id via `POST /dev/login` (needs `DEMO_LOGIN=true`, as in compose)
 and sends the token; the Merchant comes only from the token. Anonymous scenarios
 (`"user_id": null`) are sent without a token.
-Prints intent, agent, answer and Sources per scenario, then routing accuracy (Intent) and
+Prints intent, agent, answer and Sources per scenario, then routing accuracy (Intent, and
+`agent` where the scenario declares one) and
 fact accuracy (expected facts in the reply) as separate totals, listing missing facts.
 Exits non-zero if either is below 100%.
 """
@@ -29,6 +30,7 @@ class Scenario:
     intent: str
     facts: list[Fact] = field(default_factory=list)
     intents_needed: list[str] = field(default_factory=list)  # Mixed question: ≥2 Intents
+    agent: str | None = None  # expected `agent` in the reply (e.g. escalator); None: not checked
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,8 @@ def check_reply(body: dict, scenario: Scenario) -> CheckResult:
     missing = [fact for fact in scenario.facts if not any(alt.casefold() in answer for alt in fact)]
     return CheckResult(
         # A Mixed question is routed right to any of its needed Intents; coverage judges the rest.
-        routing_ok=body.get("intent") in {scenario.intent, *scenario.intents_needed},
+        routing_ok=body.get("intent") in {scenario.intent, *scenario.intents_needed}
+        and (scenario.agent is None or body.get("agent") == scenario.agent),
         facts_ok=not missing if scenario.facts else None,
         missing_facts=missing,
     )
@@ -58,7 +61,9 @@ def brl(amount: str) -> Fact:
 
 DATASET = Path(__file__).resolve().parent.parent / "evals" / "scenarios.json"
 # Same values as `app.graph.Intent` (a test keeps them in sync); stdlib only so the script runs anywhere.
-INTENTS = {"knowledge", "support", "unsupported"}
+INTENTS = {"knowledge", "support", "unsupported", "human"}
+# Same values as `app.graph.Agent` (a test keeps them in sync).
+AGENTS = {"router", "knowledge", "support", "escalator"}
 
 
 class DatasetError(ValueError):
@@ -85,8 +90,11 @@ def parse_scenario(raw: dict, where: str) -> Scenario:
     needed = raw.get("intents_needed", [])
     if needed and (len(set(needed)) < 2 or not set(needed) <= INTENTS):
         raise DatasetError(f"{where}: intents_needed must list at least 2 distinct Intents of {sorted(INTENTS)}")
+    agent = raw.get("agent")
+    if agent is not None and agent not in AGENTS:
+        raise DatasetError(f"{where}: agent must be one of {sorted(AGENTS)}, got {agent!r}")
     facts = [_fact(f, where) for f in raw.get("facts", [])]
-    return Scenario(message, user_id, intent, facts=facts, intents_needed=list(needed))
+    return Scenario(message, user_id, intent, facts=facts, intents_needed=list(needed), agent=agent)
 
 
 def load_scenarios(path: Path = DATASET) -> list[Scenario]:
