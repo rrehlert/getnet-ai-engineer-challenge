@@ -9,11 +9,11 @@ One piece of text a Merchant (with their login token, optionally continuing a Co
 _Avoid_: Query, prompt, request
 
 **Conversation**:
-An ordered series of Turns owned by one Merchant, identified by a random id. A Merchant's first Message starts one; follow-ups name it. Another Merchant's Conversation is indistinguishable from one that doesn't exist.
+An ordered series of Turns owned by one Merchant, identified by a random id. A Merchant's first Message starts one; follow-ups name it. Another Merchant's Conversation is indistinguishable from one that doesn't exist. Operators see only Conversations that had a Handoff or carry a Review flag.
 _Avoid_: Session, thread, chat
 
 **Turn**:
-One entry in a Conversation: a Message (`user`), its reply (`assistant`), or later a message from an Operator (`operator`). Stores the text, Intent and Sources, never Evidence. The last 10 Turns before a Message are its history: every Agent sees them as context, but account facts always come from fresh tool calls.
+One entry in a Conversation: a Message (`user`), a reply from an Agent (`assistant`), or a reply from an Operator (`operator`). Stores the text, Intent and Sources, never Evidence. The last 10 Turns before a Message are its history: every Agent sees them as context, but account facts always come from fresh tool calls.
 _Avoid_: Message (that is only the Merchant's side), exchange, entry
 
 **Merchant**:
@@ -21,16 +21,32 @@ A Getnet customer business, identified by a user id (e.g. `cliente1988`), that o
 _Avoid_: User, client, customer, lojista
 
 **Anonymous visitor**:
-Someone who sends a Message without a login token. There is no Merchant, so only the Knowledge Agent can answer: account questions get a fixed "log in to see your account" reply and the Customer Support Agent never runs. Nothing is remembered between their Messages. A bad token never makes someone an Anonymous visitor; it is rejected.
+Someone who sends a Message without a login token. There is no Merchant, so only the Knowledge Agent can answer: account questions and requests for a person get a fixed "log in" reply, the Customer Support Agent never runs, and there is no Escalation. Nothing is remembered between their Messages. A bad token never makes someone an Anonymous visitor; it is rejected.
 _Avoid_: Guest, anonymous user, public user
 
 **Operator**:
-A Getnet staff member who logs in with role `operator` (not a Merchant). Operators cannot chat as a Merchant; their actions come with the human takeover.
+A Getnet staff member who logs in with role `operator` (not a Merchant). Operators cannot chat as a Merchant; they claim waiting Conversations and reply to the Merchant during a Handoff.
 _Avoid_: Agent (taken by the AI Agents), admin, attendant
 
 **Intent**:
-The Router Agent's classification of a Message: `knowledge`, `support`, or `unsupported`.
+The Router Agent's classification of a Message: `knowledge`, `support`, `human` (the Merchant asks for a person), or `unsupported`.
 _Avoid_: Category, route, topic
+
+**Mode**:
+Who answers a Conversation right now: `bot` (the Agents), `waiting_human` (escalated, no Operator yet), `human` (an Operator has claimed it), or `closed` (finished; the Merchant starts a new Conversation). Outside `bot`, the Agents don't answer: Messages wait for the Operator.
+_Avoid_: State, status, takeover flag
+
+**Escalation**:
+The act that hands a Conversation from the Agents to a human: the Merchant asks for a person, or a specialist decides it cannot resolve the case. It starts a Handoff and moves the Conversation to `waiting_human`.
+_Avoid_: Transfer, takeover
+
+**Handoff**:
+One episode of human help in a Conversation, from Escalation until the Operator hands it back to the Agents or closes it. It holds the Handoff Brief, the claiming Operator and the outcome. A Conversation has any number of Handoffs over time, at most one open.
+_Avoid_: Takeover, ticket, case
+
+**Handoff Brief**:
+The Escalator Agent's summary of a Handoff for the Operator: why it escalated, what the Merchant wants, what the Agents already tried, category, priority and a suggested reply. The suggested reply is only ever sent by an Operator's choice. Account facts shown to the Operator come from the system, never from the brief.
+_Avoid_: Summary, ticket description, handover note
 
 ## Agents
 
@@ -45,6 +61,10 @@ _Avoid_: RAG agent, FAQ agent, search agent
 **Customer Support Agent**:
 The specialist for questions about the Merchant's own account, such as Settlements, Terminals and recent transactions.
 _Avoid_: Support bot, account agent, helpdesk
+
+**Escalator Agent**:
+The fourth Agent. On an Escalation it writes the Handoff Brief and tells the Merchant, in their language, that they are being transferred. It summarises; it does not investigate or call tools.
+_Avoid_: Handoff agent, human agent, escalation bot
 
 ## Knowledge
 
@@ -87,3 +107,7 @@ _Avoid_: Eval score, rating, confidence
 **Mixed question**:
 A Message that needs more than one specialist to answer fully, e.g. a Terminal that is offline plus how to set up Wi-Fi (Customer Support and Knowledge). The Router picks one Intent per Message.
 _Avoid_: Multi-intent message, compound question
+
+**Review flag**:
+A mark on a Conversation whose Agent reply got a low `answer` Judge Score. Operators review flagged Conversations after the fact and clear the flag; it never changes the Mode or blocks the Merchant.
+_Avoid_: needs review, alert, escalation
