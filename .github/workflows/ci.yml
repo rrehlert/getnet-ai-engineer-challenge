@@ -53,11 +53,15 @@ jobs:
           done
           echo "/health did not return 200 within 300s"
           exit 1
-      - name: Empty /chat body returns 422
+      - name: Logged-in empty /chat body returns 422
         run: |
+          token=$(curl -s --max-time 10 -X POST -H 'Content-Type: application/json' \
+            -d '{"user_id": "cliente1988"}' "http://localhost:${PORT}/dev/login" | jq -r .access_token)
+          [ -n "$token" ] && [ "$token" != "null" ] || { echo "/dev/login returned no token"; exit 1; }
           code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST \
-            -H 'Content-Type: application/json' -d '{}' "http://localhost:${PORT}/chat" || true)
-          echo "/chat {} -> $code"
+            -H 'Content-Type: application/json' -H "Authorization: Bearer $token" \
+            -d '{}' "http://localhost:${PORT}/chat" || true)
+          echo "/chat {} with token -> $code"
           [ "$code" = "422" ]
       - name: Show logs
         if: failure()

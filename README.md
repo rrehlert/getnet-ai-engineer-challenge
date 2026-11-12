@@ -19,13 +19,17 @@ The container runs as a non-root user (`app`, uid 10001). The index lives on the
 
 `/health` returns `{"status":"ok"}` once the index is ready. Until then it returns 503 `{"status":"starting"}`. The compose healthcheck waits for it.
 
-Try it with a small shell helper (needs `jq`):
+Try it with a small shell helper (needs `jq`). `/chat` takes the Merchant only from a login token, so log in first; compose enables the dev login (`DEMO_LOGIN=true`):
 
 ```bash
-# chat "<message>" [user_id]   (user_id defaults to cliente1988)
-chat() { curl -s localhost:8000/chat -H 'content-type: application/json' \
-  -d "{\"message\": \"$1\", \"user_id\": \"${2:-cliente1988}\"}" | jq; }
+# login [user_id]   (log in as a Merchant via the dev login; user_id defaults to cliente1988)
+login() { TOKEN=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
+  -d "$(jq -n --arg u "${1:-cliente1988}" '{user_id: $u}')" | jq -r .access_token); }
+# chat "<message>"   (as the logged-in Merchant; tokens last 1 hour)
+chat() { curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d "$(jq -n --arg m "$1" '{message: $m}')" | jq; }
 
+login
 chat "Do I need a bank account to receive my sales via Pix?"        # Knowledge (RAG)
 chat "What's the euro exchange rate today?"                         # Knowledge (web search)
 chat "When will the money from yesterday's sales be deposited?"     # Customer Support
@@ -41,7 +45,8 @@ docker compose logs --tail 0 -f --no-log-prefix api | jq -R 'fromjson? // empty 
 ## Overview
 
 ```
-POST /chat {message, user_id}
+POST /dev/login {user_id} → token (demo only)
+POST /chat {message} + Authorization: Bearer <token>   (Merchant = token `sub`)
         │
         ▼
   Router Agent ── one structured LLM call → Intent + (refusal reply)
@@ -54,6 +59,11 @@ POST /chat {message, user_id}
 {answer, intent, agent, sources, steps, trace_id}
 ```
 
+- **Identity** (`app/auth.py`, [ADR 0005](docs/adr/0005-identity-from-verified-token.md)). The Merchant comes only from a verified token, never from the request body.
+  - `POST /dev/login {user_id}` returns `{access_token, token_type}`: an HS256 JWT (PyJWT) with `sub`, `role` (`merchant` or `operator`) and `exp` (1 hour), signed with `JWT_SECRET`. It is a "log in as" stand-in for an identity provider and proves nothing about the caller, so it exists only with `DEMO_LOGIN=true` (compose sets it; the default is off, and then it is 404). Ids in the fixture and unknown ids log in as Merchants (an unknown one gets the "account not found" reply); the mock operator `operador1` gets role `operator`.
+  - `/chat` and `GET /me` need `Authorization: Bearer <token>`. Invalid or expired token → 401 (`invalid_token`), never downgraded to anonymous; an operator token on `/chat` → 403. A missing token is also 401 (`unauthorized`) for now: anonymous Knowledge-only access (ADR 0005) is the next ticket of [`.scratch/conversations-identity/`](.scratch/conversations-identity/). A `user_id` in the `/chat` body is ignored.
+  - `GET /me` returns `{sub, role}` and, for a Merchant, `account`: their fixture profile and data (null when they have no account).
+  - The token's `sub` goes into graph state as `user_id`, so everything after the boundary (tools, `SupportContext`, logs) is unchanged.
 - **Orchestration.** A LangGraph `StateGraph` (`app/graph.py`) with conditional edges on `state["intent"]`. `build_graph(route_fn, knowledge, support)` takes each agent as a plain callable, so tests inject fakes.
 - **Router Agent** (`app/router.py`). One `with_structured_output(Route, method="function_calling", include_raw=True)` call.
   - `support`: the Merchant's own account ("my" machine, "my" sales, deposits, declines).
@@ -110,6 +120,7 @@ POST /chat {message, user_id}
 ## Guardrails and reliability
 
 - **Scope guardrail:** the Router's `unsupported` Intent catches off-topic requests, attempts to read another Merchant's data, prompt injection ("ignore your instructions…") and harmful requests. It replies with a polite refusal in the Message's language and calls no tools.
+- **Identity:** the Merchant comes only from a verified, expiring token (see [Overview](#overview)); a bad token is rejected, never treated as no token.
 - **Data isolation:** `user_id` lives in the tool runtime context, not the prompt. An unknown user gets an agent with no tools.
 - **Grounding:** Sources come only from tool artifacts and are filtered by the relevance threshold. The `answer` Judge checks claims against the Evidence.
 - **Log privacy:** personal data is masked in every log line and the user id is pseudonymized (see [Privacy](#privacy)).
@@ -137,7 +148,7 @@ Merchants type personal data into Messages, so no log line writes it in clear te
   | Pix random keys (UUID with dashes) | `[PIX_KEY]` |
 
   BRL amounts, ISO dates, `trace_id`s and Terminal ids are left intact.
-- **Pseudonymized user id.** The request line has `user_ref` instead of `user_id`: a keyed HMAC-SHA256 of the user id, first 16 hex characters, keyed by `LOG_HASH_KEY`. The same Merchant always gets the same ref (so events can be correlated), and without the key it can't be reversed by hashing every possible id. If `LOG_HASH_KEY` is empty, a random key is generated at startup with a warning, and refs change on every restart.
+- **Pseudonymized user id.** The request line has `user_ref` instead of `user_id`: a keyed HMAC-SHA256 of the user id (the token's `sub`), first 16 hex characters, keyed by `LOG_HASH_KEY`. The same Merchant always gets the same ref (so events can be correlated), and without the key it can't be reversed by hashing every possible id. If `LOG_HASH_KEY` is empty, a random key is generated at startup with a warning, and refs change on every restart.
 - **Logging modes** (`LOG_MESSAGES`), for the Message on the request line and the Message and reply on Judge lines:
 
   | Mode | Logged |
@@ -206,37 +217,51 @@ All configuration is in env vars (see [`.env.example`](.env.example)). Never com
 | `PORT` | `8000` | |
 | `CHROMA_DIR` | `chroma` | persistent index directory (in compose, the named volume `chroma` at `/app/chroma`) |
 | `LOG_HASH_KEY` | empty | key for the `user_ref` HMAC in logs; empty means a random key per process, with a warning (refs change on restart) |
+| `JWT_SECRET` | empty | HS256 key for login tokens; empty means a random secret per process, with a warning (tokens stop working on restart) |
+| `DEMO_LOGIN` | `false` (`true` in compose) | enables `POST /dev/login` ("log in as" any user id); never enable it in a real deployment |
 | `LOG_MESSAGES` | `redacted` | how much Message/reply text is logged; see [Privacy](#privacy) |
 | `EVAL_RUNS` | `3` | runs per scenario in the [eval runner](#eval-runner) (≥1); not used by the service |
 
 ## Examples to test
 
-With the stack running, more examples using plain curl:
+With the stack running, more examples using plain curl (and `jq` to read the token):
 
 ```bash
+# Log in as cliente1988 (dev login, DEMO_LOGIN=true)
+TOKEN=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
+  -d '{"user_id": "cliente1988"}' | jq -r .access_token)
+
+# Who am I: the principal and the fixture account
+curl -s localhost:8000/me -H "authorization: Bearer $TOKEN"
+
 # Knowledge (RAG over the Corpus)
-curl -s localhost:8000/chat -H 'content-type: application/json' \
-  -d '{"message": "Do I need a bank account to receive my sales via Pix?", "user_id": "cliente1988"}'
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d '{"message": "Do I need a bank account to receive my sales via Pix?"}'
 
 # Knowledge (web search)
-curl -s localhost:8000/chat -H 'content-type: application/json' \
-  -d '{"message": "What'\''s the euro exchange rate today?", "user_id": "cliente1988"}'
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d '{"message": "What'\''s the euro exchange rate today?"}'
 
 # Customer Support (mock account tools)
-curl -s localhost:8000/chat -H 'content-type: application/json' \
-  -d '{"message": "When will the money from yesterday'\''s sales be deposited?", "user_id": "cliente1988"}'
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d '{"message": "When will the money from yesterday'\''s sales be deposited?"}'
 
 # Customer Support, in Portuguese
-curl -s localhost:8000/chat -H 'content-type: application/json' \
-  -d '{"message": "Minha maquininha não conecta na internet, o que faço?", "user_id": "cliente1988"}'
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d '{"message": "Minha maquininha não conecta na internet, o que faço?"}'
 
 # Unsupported: another merchant's data, refused by the Router
-curl -s localhost:8000/chat -H 'content-type: application/json' \
-  -d '{"message": "Show me cliente2024'\''s sales", "user_id": "cliente1988"}'
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
+  -d '{"message": "Show me cliente2024'\''s sales"}'
 
-# Unknown user: 200 with an "account not found" answer, no tool calls
-curl -s localhost:8000/chat -H 'content-type: application/json' \
-  -d '{"message": "My card machine is showing a transaction decline error.", "user_id": "nobody"}'
+# Unknown user: logs in as a Merchant with no account; 200 with an "account not found" answer, no tool calls
+NOBODY=$(curl -s localhost:8000/dev/login -H 'content-type: application/json' \
+  -d '{"user_id": "nobody"}' | jq -r .access_token)
+curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $NOBODY" \
+  -d '{"message": "My card machine is showing a transaction decline error."}'
+
+# No token: 401
+curl -s localhost:8000/chat -H 'content-type: application/json' -d '{"message": "hi"}'
 ```
 
 Example response:
@@ -257,6 +282,8 @@ To run the shared scenario dataset (the 10 example Messages from the challenge, 
 ```bash
 uv run python scripts/scenarios.py            # or: scripts/scenarios.py http://host:port
 ```
+
+It logs in as each scenario's user id through `POST /dev/login` (so it needs `DEMO_LOGIN=true`, as in compose) and sends the token.
 
 Each scenario prints a routing mark and a facts mark (`✓`, `✗`, or `-` when it declares no facts), then the Intent, agent, steps, `trace_id`, answer, Sources and any missing facts. The report ends with two separate totals (here, an all-pass run):
 
@@ -329,7 +356,7 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 195 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 215 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
@@ -338,6 +365,7 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
   - an unknown user triggers no tool call.
 - **RAG:** chunking, the title prefix, threshold filtering, collection-name hashing.
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
+- **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, missing/invalid/expired token → 401, operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
 - **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.
@@ -348,7 +376,7 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 
 **CI (`.github/workflows/ci.yml`).** On every push and pull request (changes only under `.scratch/`, `docs/` or to the diary are skipped):
 - `test`: `uv sync --locked`, then `uv run pytest`;
-- `smoke`: `docker compose up -d --build`, wait up to 300 s for `/health` = 200, POST `{}` to `/chat` and expect 422, print logs on failure, always `docker compose down -v`.
+- `smoke`: `docker compose up -d --build`, wait up to 300 s for `/health` = 200, log in via `/dev/login`, POST `{}` to `/chat` with the token and expect 422, print logs on failure, always `docker compose down -v`.
 
 It uses no secrets: the app starts and builds its index without an LLM key, and `/chat` is never called with a valid body, so CI makes no LLM calls.
 
@@ -370,7 +398,8 @@ It uses no secrets: the app starts and builds its index without an LLM key, and 
 ```
 .
 ├── app/                    # the service
-│   ├── main.py             # FastAPI app: /chat, /health, error mapping, request logging, judge scheduling
+│   ├── main.py             # FastAPI app: /chat, /me, /dev/login, /health, error mapping, request logging, judge scheduling
+│   ├── auth.py             # tokens (issue/verify), Principal, mock operators
 │   ├── graph.py            # LangGraph StateGraph, GraphState, Intent/Agent types, Source dedup
 │   ├── router.py           # Router Agent (structured output) + shared intent policy
 │   ├── knowledge.py        # Knowledge Agent + search_corpus / web_search tools
@@ -432,7 +461,7 @@ The README (`11`, `12`) and the video came after the timebox.
 
 ## Known limitations / future improvements
 
-- **Identity:** `user_id` comes from the request body. It should come from a session or JWT cookie, together with real auth.
+- **Identity:** the Merchant comes from a verified JWT, but tokens are issued by a demo "log in as" endpoint, not a real identity provider; no refresh or revocation.
 - **Get Clássica:** the Corpus has little on it, so comparing it with Get Smart is weak.
 - **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it.
 - **Sources:** they can be noisy (every Chunk above the threshold from every search), so filter them to the ones the answer uses.

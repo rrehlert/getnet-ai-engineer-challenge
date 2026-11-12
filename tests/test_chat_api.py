@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.graph import build_graph
 from app.main import create_app
+from tests.test_auth import auth, bearer, login
 
 
 def route_to(intent, reply=""):
@@ -25,7 +26,8 @@ def support(state):
 
 
 def client_for(route_fn):
-    return TestClient(create_app(graph=build_graph(route_fn, knowledge, support)))
+    graph = build_graph(route_fn, knowledge, support)
+    return TestClient(create_app(graph=graph, auth=auth(), judge_enabled=False))
 
 
 def raising(exc):
@@ -36,7 +38,8 @@ def raising(exc):
 
 
 def post(client, message="hi", user_id="cliente1988"):
-    return client.post("/chat", json={"message": message, "user_id": user_id})
+    """Log in as `user_id` via the app's dev login, then chat with that token."""
+    return client.post("/chat", json={"message": message}, headers=bearer(login(client, user_id)))
 
 
 def test_knowledge_reply_has_spec_shape():
@@ -52,7 +55,7 @@ def test_knowledge_reply_has_spec_shape():
     assert body["trace_id"]
 
 
-def test_support_uses_user_id_from_body():
+def test_support_uses_user_id_from_the_token():
     body = post(client_for(route_to("support")), user_id="cliente2024").json()
 
     assert body["agent"] == "support"
@@ -71,17 +74,10 @@ def test_unsupported_is_200_answered_by_router():
     assert body["steps"] == ["router"]
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"message": "", "user_id": "cliente1988"},
-        {"message": "hi", "user_id": ""},
-        {"message": "hi"},
-        {"user_id": "cliente1988"},
-    ],
-)
+@pytest.mark.parametrize("payload", [{"message": ""}, {}, {"user_id": "cliente1988"}])
 def test_invalid_body_is_422(payload):
-    response = client_for(route_to("knowledge")).post("/chat", json=payload)
+    client = client_for(route_to("knowledge"))
+    response = client.post("/chat", json=payload, headers=bearer(login(client)))
 
     assert response.status_code == 422
 

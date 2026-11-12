@@ -11,6 +11,7 @@ from app.graph import build_graph
 from app.judge import run_judges
 from app.main import create_app
 from app.observability import LogPrivacy
+from tests.test_auth import auth
 from tests.test_chat_api import knowledge, post, raising, route_to, support
 
 
@@ -44,7 +45,7 @@ def coverage(intents_needed, fully_answered, missing="", score=1.0, reason="r"):
 
 
 def app_for(route_fn, **kw):
-    return create_app(graph=build_graph(route_fn, knowledge, support), **kw)
+    return create_app(graph=build_graph(route_fn, knowledge, support), **{"auth": auth(), "judge_enabled": False, **kw})
 
 
 def test_request_log_line_has_spec_fields(caplog):
@@ -123,7 +124,7 @@ def test_request_log_line_when_index_is_not_ready(caplog):
 
     caplog.set_level(logging.INFO)
     release = threading.Event()
-    app = create_app(load_index=lambda: release.wait(5))
+    app = create_app(load_index=lambda: release.wait(5), auth=auth())
     with TestClient(app) as client:
         body = post(client).json()
         release.set()
@@ -190,7 +191,7 @@ def knowledge_with_evidence(state):
 def test_evidence_reaches_the_answer_judge_but_not_the_chat_response():
     model = RecordingJudgeModel(messages=iter([verdict(0.9), verdict(0.9), coverage(["knowledge"], True)]), seen=[])
     graph = build_graph(route_to("knowledge"), knowledge_with_evidence, support)
-    client = TestClient(create_app(graph=graph, judge_enabled=True, judge_model=model))
+    client = TestClient(create_app(graph=graph, judge_enabled=True, judge_model=model, auth=auth()))
 
     body = post(client).json()
 

@@ -7,6 +7,8 @@ services:
     environment:
       PORT: ${PORT:-8000}
       JUDGE_ENABLED: ${JUDGE_ENABLED:-true}
+      # Demo "log in as" endpoint (POST /dev/login); off by default outside compose.
+      DEMO_LOGIN: ${DEMO_LOGIN:-true}
     volumes:
       # Corpus index survives container recreation (rebuilt only when the corpus changes).
       - chroma:/app/chroma

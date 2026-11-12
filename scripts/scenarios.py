@@ -2,6 +2,8 @@
 
 Usage: uv run python scripts/scenarios.py [BASE_URL]
 BASE_URL defaults to $API_BASE_URL, then http://localhost:8000.
+Logs in as each scenario's user id via `POST /dev/login` (needs `DEMO_LOGIN=true`, as in compose)
+and sends the token; the Merchant comes only from the token.
 Prints intent, agent, answer and Sources per scenario, then routing accuracy (Intent) and
 fact accuracy (expected facts in the reply) as separate totals, listing missing facts.
 Exits non-zero if either is below 100%.
@@ -91,11 +93,11 @@ def load_scenarios(path: Path = DATASET) -> list[Scenario]:
     return [parse_scenario(raw, f"scenario {i}") for i, raw in enumerate(data["scenarios"], 1)]
 
 
-def post_chat(base_url: str, message: str, user_id: str) -> tuple[int, dict]:
+def _post(url: str, payload: dict, headers: dict | None = None) -> tuple[int, dict]:
     request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/chat",
-        data=json.dumps({"message": message, "user_id": user_id}).encode(),
-        headers={"Content-Type": "application/json"},
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
     try:
@@ -103,6 +105,22 @@ def post_chat(base_url: str, message: str, user_id: str) -> tuple[int, dict]:
             return response.status, json.load(response)
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read() or b"{}")
+
+
+class LoginError(RuntimeError):
+    pass
+
+
+def login(base_url: str, user_id: str) -> str:
+    """A token for `user_id` from the dev login; raises `LoginError` if it's disabled or fails."""
+    status, body = _post(f"{base_url.rstrip('/')}/dev/login", {"user_id": user_id})
+    if status != 200 or "access_token" not in body:
+        raise LoginError(f"POST /dev/login as {user_id} -> HTTP {status} (is DEMO_LOGIN=true?)")
+    return body["access_token"]
+
+
+def post_chat(base_url: str, message: str, token: str) -> tuple[int, dict]:
+    return _post(f"{base_url.rstrip('/')}/chat", {"message": message}, {"Authorization": f"Bearer {token}"})
 
 
 def format_fact(fact: Fact) -> str:
@@ -114,8 +132,15 @@ def main() -> int:
     routing_passed = facts_passed = facts_total = 0
     missing_by_scenario: list[tuple[int, list[Fact]]] = []
     scenarios = load_scenarios()
+    tokens: dict[str, str] = {}
     for i, scenario in enumerate(scenarios, 1):
-        status, body = post_chat(base_url, scenario.message, scenario.user_id)
+        if scenario.user_id not in tokens:  # tokens last an hour: one login per Merchant per run
+            try:
+                tokens[scenario.user_id] = login(base_url, scenario.user_id)
+            except LoginError as exc:
+                print(exc, file=sys.stderr)
+                return 2
+        status, body = post_chat(base_url, scenario.message, tokens[scenario.user_id])
         result = check_reply(body, scenario)
         routing_passed += result.routing_ok
         if result.facts_ok is not None:

@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # HMAC key for `user_ref` in logs; empty means a random key per process (refs don't match across restarts).
     log_hash_key: str = ""
     log_messages: MessageMode = "redacted"
+    # HS256 key for login tokens; empty means a random secret per process (tokens die on restart).
+    jwt_secret: str = ""
+    # Enables `POST /dev/login` ("log in as" any user id). Off by default; compose turns it on.
+    demo_login: bool = False
 
 
 def warn_if_judge_not_independent(settings: Settings) -> None:

@@ -16,15 +16,25 @@ See ADR 0005.
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Dev login on → token with expected claims; off → 404
-- [ ] Unknown id logs in as Merchant; Support path gives "account not found"
-- [ ] Invalid signature → 401; expired token (injected clock) → 401; missing token → 401
-- [ ] Operator token on `/chat` → 403
-- [ ] Fake graph capturing state: `user_id` equals token `sub`; body `user_id` has no effect
-- [ ] `GET /me` returns principal and, for a Merchant, fixture account data
-- [ ] Empty `JWT_SECRET` → startup warning
-- [ ] Request log line `user_ref` derives from `sub`
-- [ ] Scenario script, CLI helper, README examples and CI smoke use login-first and pass
-- [ ] No real LLM calls in tests
+- [x] Dev login on → token with expected claims; off → 404
+- [x] Unknown id logs in as Merchant; Support path gives "account not found"
+- [x] Invalid signature → 401; expired token (injected clock) → 401; missing token → 401
+- [x] Operator token on `/chat` → 403
+- [x] Fake graph capturing state: `user_id` equals token `sub`; body `user_id` has no effect
+- [x] `GET /me` returns principal and, for a Merchant, fixture account data
+- [x] Empty `JWT_SECRET` → startup warning
+- [x] Request log line `user_ref` derives from `sub`
+- [x] Scenario script, CLI helper, README examples and CI smoke use login-first and pass
+- [x] No real LLM calls in tests
+
+## Comments
+
+2026-11-11, implementation notes:
+- Live stack not run; scenario script verified against a local uvicorn with a fake graph (login per user id; DEMO_LOGIN off → clear error, exit 2). CI smoke logs in, then `{}` → 422.
+- Body `user_id` is ignored (pydantic default), not rejected.
+- `/me`: operators get `{sub, role}` only; Merchants get `account` (null when not in the fixture).
+- Mock operator: `operador1` (`app/auth.py` `OPERATORS`).
+- Fixed a pre-existing leak: `tests/test_chat_api.py` and `tests/test_observability.py` app helpers picked up `JUDGE_ENABLED=true` from a local `.env` and scheduled real Judge calls; they now pass `judge_enabled=False`.
+- Missing token → 401 is marked temporary in `principal()` and the README; ticket 02 changes it.
