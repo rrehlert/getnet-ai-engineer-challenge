@@ -23,6 +23,7 @@ from app.auth import Principal
 from app.errors import AuthError, error_response
 from app.graph import HandoffBrief, Node, Priority, Source, fallback_brief
 from app.observability import EventBuffer
+from app.redact import redact, redact_value
 from app.store import (
     ActionResult,
     Conversation,
@@ -84,6 +85,9 @@ class ConversationDetail(BaseModel):
     handoff: HandoffOut | None  # `Store.current_handoff`; None for a flagged Conversation never escalated
     account: dict | None  # the Merchant's fixture account; None when there is none
     turns: list[OperatorTurn]
+    # True unless the caller holds the open claim: Turns and brief then have personal data masked
+    # (Queue preview, Review, another Operator's Conversation); claiming shows them in full.
+    redacted: bool
 
 
 class ReviewItem(BaseModel):
@@ -152,7 +156,7 @@ def operator_router(
                 created_at=h.created_at,
                 category=h.brief["category"],
                 priority=h.brief["priority"],
-                customer_ask=h.brief["customer_ask"],
+                customer_ask=redact(h.brief["customer_ask"]),  # unclaimed: masked
             )
             for h in store().queue()
         ])
@@ -172,11 +176,14 @@ def operator_router(
             for h in store().mine(caller.sub)
         ])
 
-    def view(conversation: Conversation) -> ConversationDetail:
+    def view(conversation: Conversation, caller: Principal) -> ConversationDetail:
         # Lazily, like `/me`: keeps the agent stack out of app import.
         from app.support import load_merchants
 
         current = store().current_handoff(conversation.id)
+        # Need to know: only the Operator handling the Conversation sees its personal data.
+        handling = current is not None and current.ended_at is None and current.claimed_by == caller.sub
+        mask = (lambda v: v) if handling else redact_value
         return ConversationDetail(
             conversation_id=conversation.id,
             merchant=conversation.owner,
@@ -185,18 +192,19 @@ def operator_router(
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
             handoff=None if current is None else HandoffOut(
-                brief=current.brief, created_at=current.created_at,
+                brief=mask(current.brief), created_at=current.created_at,
                 claimed_by=current.claimed_by, claimed_at=current.claimed_at,
                 outcome=current.outcome, ended_at=current.ended_at,
             ),
             # Resolved by software from the fixture, never by a model.
             account=load_merchants(today()).get(conversation.owner),
             turns=[
-                OperatorTurn(id=t.id, role=t.role, content=t.content, intent=t.intent,
+                OperatorTurn(id=t.id, role=t.role, content=mask(t.content), intent=t.intent,
                              sources=[Source(url=s["url"], title=s["title"]) for s in t.sources],
                              created_at=t.created_at)
                 for t in store().turns(conversation.id)
             ],
+            redacted=not handling,
         )
 
     @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
@@ -205,7 +213,7 @@ def operator_router(
         conversation = store().operator_conversation(conversation_id)
         if conversation is None:
             return _not_found()
-        return view(conversation)
+        return view(conversation, caller)
 
     @router.get("/conversations/{conversation_id}/events", response_model=EventList)
     def conversation_events(conversation_id: str, caller: Operator):
@@ -229,7 +237,7 @@ def operator_router(
             )
         # After the claim, outside its transaction: the model call never holds the database.
         refresh_brief(conversation_id)
-        return view(store().operator_conversation(conversation_id))
+        return view(store().operator_conversation(conversation_id), caller)
 
     def refresh_brief(conversation_id: str) -> None:
         """If the Merchant wrote after the brief, the Escalator Agent rewrites it. A failed or
@@ -273,11 +281,11 @@ def operator_router(
             return _not_found()
         if not store().clear_review(conversation_id, caller.sub):
             return error_response(409, "not_flagged", "This Conversation has no Review flag.", uuid.uuid4().hex)
-        return view(dataclasses.replace(conversation, needs_review=False))
+        return view(dataclasses.replace(conversation, needs_review=False), caller)
 
     # --- Reply, handback, close: the claiming Operator's actions ---
 
-    def act(conversation_id: str, action: Callable[[], ActionResult]):
+    def act(conversation_id: str, caller: Principal, action: Callable[[], ActionResult]):
         """Run an Operator action on a visible Conversation; 403 when another Operator holds
         the claim, 409 when the Mode doesn't allow it. Returns the detail view on success."""
         if store().operator_conversation(conversation_id) is None:
@@ -289,25 +297,25 @@ def operator_router(
         if result == "wrong_mode":
             return error_response(409, "wrong_mode", "This action is not allowed in the Conversation's current Mode.",
                                   uuid.uuid4().hex)
-        return view(store().operator_conversation(conversation_id))
+        return view(store().operator_conversation(conversation_id), caller)
 
     @router.post("/conversations/{conversation_id}/reply", response_model=ConversationDetail)
     def reply(conversation_id: str, request: ReplyRequest, caller: Operator):
         """The claiming Operator's message to the Merchant, stored as an `operator` Turn; `human` Mode only."""
-        return act(conversation_id, lambda: store().reply(
+        return act(conversation_id, caller, lambda: store().reply(
             conversation_id, caller.sub, NewTurn("operator", request.content), request.used_suggestion))
 
     @router.post("/conversations/{conversation_id}/handback", response_model=ConversationDetail)
     def handback(conversation_id: str, caller: Operator):
         """`human` → `bot` by the claiming Operator; the Merchant sees `HANDBACK_TURN`."""
-        return act(conversation_id, lambda: store().hand_back(
+        return act(conversation_id, caller, lambda: store().hand_back(
             conversation_id, caller.sub, NewTurn("assistant", HANDBACK_TURN)))
 
     @router.post("/conversations/{conversation_id}/close", response_model=ConversationDetail)
     def close(conversation_id: str, caller: Operator):
         """→ `closed`: by the claiming Operator in `human`, or by any Operator in `waiting_human`
         (spam, Merchant gave up; no claim needed). The Merchant sees `CLOSE_TURN`."""
-        return act(conversation_id, lambda: store().close(
+        return act(conversation_id, caller, lambda: store().close(
             conversation_id, caller.sub, NewTurn("assistant", CLOSE_TURN)))
 
     return router

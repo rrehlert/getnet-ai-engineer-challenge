@@ -284,12 +284,13 @@ const OPERATOR_PANELS = [];
       const claimedBy = handoff && !handoff.ended_at ? handoff.claimed_by : null;
       const mine = d.mode === "human" && claimedBy === me;
 
-      if (changed("head", [d.mode, d.needs_review, claimedBy, d.merchant])) {
+      if (changed("head", [d.mode, d.needs_review, claimedBy, d.merchant, d.redacted])) {
         parts.head.replaceChildren(
           el("h2", {}, "Conversation"),
           el("div", { class: "op-meta" },
             modeBadge(d.mode),
             d.needs_review ? el("span", { class: "badge op-flag" }, "flagged for Review") : null,
+            d.redacted ? el("span", { class: "badge", title: "Only the Operator handling this Conversation sees its personal data" }, "personal data masked") : null,
             el("span", { class: "muted" }, "Merchant " + d.merchant),
             el("span", { class: "muted" }, claimedBy ? "claimed by " + (claimedBy === me ? "you" : claimedBy) : "unclaimed"),
             el("span", { class: "muted op-id" }, d.conversation_id)));
@@ -313,7 +314,7 @@ const OPERATOR_PANELS = [];
         ].filter(Boolean));
       }
 
-      if (changed("turns", d.turns.map((t) => t.id))) {
+      if (changed("turns", [d.redacted, d.turns.map((t) => t.id)])) {
         const atBottom = parts.turns.scrollHeight - parts.turns.scrollTop - parts.turns.clientHeight < 40;
         parts.turns.replaceChildren(...(d.turns.length ? d.turns.map(turnNode) : [el("p", { class: "muted" }, "No Turns.")]));
         if (atBottom || parts.keys.turnsScrolled === undefined) parts.turns.scrollTop = parts.turns.scrollHeight;

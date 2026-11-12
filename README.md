@@ -134,7 +134,8 @@ The challenge's bonus: a fourth agent that requests help from a human Operator. 
   GET  /operator/queue                          waiting_human, newest first: category, priority, customer_ask, created_at
   GET  /operator/mine                           human, claimed by the caller, newest claim first (queue fields + claimed_at)
   GET  /operator/review                         Review-flagged Conversations (any Mode), newest first
-  GET  /operator/conversations/{id}             Turns, current Handoff Brief, Mode, claim, Review flag, Merchant's account from the fixture
+  GET  /operator/conversations/{id}             Turns, current Handoff Brief, Mode, claim, Review flag, Merchant's account from the fixture;
+                                                personal data masked (`redacted: true`) unless the caller holds the open claim (see Privacy)
   POST /operator/conversations/{id}/claim       waiting_human → human (atomic; second claim → 409); refreshes the brief if the Merchant wrote more
   POST /operator/conversations/{id}/reply       {content, used_suggestion}; claiming Operator only, stored as an `operator` Turn
   POST /operator/conversations/{id}/handback    human → bot; claiming Operator only; stores a fixed bilingual "back with the virtual assistant" Turn
@@ -318,6 +319,9 @@ Merchants type personal data into Messages, so no log line writes it in clear te
   | `full` | raw text, capped at 500 characters (local debugging only) |
 
   Even under `full`, other fields and non-event lines are still redacted.
+
+- **Stored Conversations.** Turns and Handoff Briefs are stored with card numbers already masked (`[CARD]`, same Luhn check as the logs): neither the bot nor an Operator needs one, so the database never holds them. Everything else (CPF, phone, email…) is stored as typed, because the Operator handling the Conversation may need it.
+- **Operator view (need to know).** Only the Operator holding the open claim sees a Conversation's personal data. Everyone else (the Queue preview before claiming, the Review tab, another Operator's Conversation, an ended Handoff) gets Turns, brief and the Queue's `customer_ask` through the same redactor as the logs; the detail carries `redacted: true` and the page shows a "personal data masked" badge. Claiming shows it in full. The Merchant's account panel comes from the fixture and is not masked.
 
 - **Retention.** Stored Conversations are not kept forever: at every startup, Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted together with their Turns. The startup log line gives only how many were deleted and the window, no ids or owners.
 
@@ -590,7 +594,7 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 - **Anonymous visitors:** no token with a fake Router: `support` gets the login reply and the Customer Support node is never called, `knowledge`/`unsupported` as today, `conversation_id` → 401, `{}` → 422, `user_ref` `anonymous`; the Router prompt (scripted fake model) and all three Judges are told the visitor is not logged in.
 - **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, listing by owner newest first, Turns `after` an id, WAL, reopen the same file after close, retention purge with an injected clock incl. the window edge), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`; a capturing fake graph sees the previous Turns as `history` in order, capped at the last 10, and none for a new Conversation or an anonymous visitor; the purge runs at app startup (default 30 days, `CONVERSATION_RETENTION_DAYS`) and logs only a count. Listing (`tests/test_listing.py`): only the caller's Conversations, newest first; Turns in order with their fields; `after`; another Merchant's/unknown id → the same 404 as `/chat`; no token or invalid token → 401, operator → 403. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
-- **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
+- **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines. Outside the logs (`tests/test_personal_data_views.py`): card-only masking keeps every other identifier (incl. a Luhn-valid bare CNPJ), Turns and briefs (written and rewritten) are stored without card numbers, and the Operator detail and Queue are redacted unless the caller holds the open claim (unclaimed, another Operator's, ended Handoff on Review).
 - **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.
 - **Eval runner:** aggregation over hand-built run records (pass rates, means, Mixed and incomplete rates, threshold decision, baseline deltas), the runner wiring with a fake graph and Judge model, and recall@4 with a fake index.
 - **Ingestion:** the extraction XPath, on saved HTML fixtures.
@@ -700,6 +704,7 @@ The README (`11`, `12`) and the video came after the timebox.
 - ~~**Semantic quality:** Judge Scores existed only as single log lines, with no aggregate, baseline or repeated runs.~~ **Closed** in the improvement run by the [eval runner](#eval-runner): aggregate Judge Scores per Intent, a committed baseline with deltas, the `coverage` Judge and recall@4.
 - **Multi-intent Router:** the baseline meets the agreed threshold (24% Mixed questions, 92% of them incomplete), so a Router that can hand one Message to both specialists is justified but not built yet.
 - **Chroma:** old hash-named collections are never pruned.
+- **Personal data outside the logs:** card numbers are masked only when stored, so the model provider still receives the Message as typed on that Turn; other personal data is stored in clear (needed by the handling Operator) until the retention purge; Conversations stored before card masking keep their raw text.
 - **Lint:** ruff isn't a project dependency (run it with `uvx ruff check`), and with its default rules the code has 28 findings, all already on `main` before the human takeover.
 - **Conversations:** the Agents see only the last 10 Turns (no summary of older ones); whether real models resolve follow-ups well is checked live, not by the eval runner (its scenarios are single Messages with empty history).
 - **Out of scope:** real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.

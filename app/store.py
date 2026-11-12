@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from app.graph import HandoffBrief
+from app.redact import mask_cards, mask_cards_value
 
 Role = Literal["user", "assistant", "operator"]
 # Human takeover (ADR 0006): only `bot` runs the graph.
@@ -294,11 +295,12 @@ class Store:
 
     @staticmethod
     def _append(conn: sqlite3.Connection, conversation_id: str, turns: Sequence[NewTurn], now: str) -> None:
+        # Card numbers are masked before they are stored (Turns and briefs): nobody needs them back.
         conn.executemany(
             "INSERT INTO turns (conversation_id, role, content, intent, sources, created_at)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             [
-                (conversation_id, t.role, t.content, t.intent, json.dumps(list(t.sources), ensure_ascii=False), now)
+                (conversation_id, t.role, mask_cards(t.content), t.intent, json.dumps(list(t.sources), ensure_ascii=False), now)
                 for t in turns
             ],
         )
@@ -322,7 +324,7 @@ class Store:
             conn.execute(
                 "INSERT INTO handoffs (conversation_id, brief, brief_turn_id, created_at)"
                 " VALUES (?, ?, (SELECT MAX(id) FROM turns WHERE conversation_id = ?), ?)",
-                (cid, json.dumps(brief, ensure_ascii=False), cid, now),
+                (cid, json.dumps(mask_cards_value(brief), ensure_ascii=False), cid, now),
             )
             conn.execute("UPDATE conversations SET mode = 'waiting_human' WHERE id = ?", (cid,))
         return cid
@@ -425,7 +427,7 @@ class Store:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE handoffs SET brief = ?, brief_turn_id = ? WHERE id = ?",
-                (json.dumps(brief, ensure_ascii=False), brief_turn_id, handoff_id),
+                (json.dumps(mask_cards_value(brief), ensure_ascii=False), brief_turn_id, handoff_id),
             )
 
     @staticmethod
