@@ -40,8 +40,10 @@ class LoginResponse(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
-    intent: Intent
-    agent: Agent
+    # Who answers this Conversation now (ADR 0006); outside `bot` the graph did not run, so no Intent or Agent.
+    mode: Mode
+    intent: Intent | None
+    agent: Agent | None
     sources: list[Source]
     steps: list[str]
     trace_id: str
@@ -70,6 +72,7 @@ class TurnOut(BaseModel):
 
 class TurnList(BaseModel):
     conversation_id: str
+    mode: Mode
     turns: list[TurnOut]
 
 
@@ -325,9 +328,21 @@ def create_app(
             return _error(503, "starting", "The service is starting; try again shortly.", trace_id)
         # Someone else's Conversation looks exactly like one that doesn't exist.
         # (An anonymous request never gets here with a conversation_id: that was a 401 above.)
-        if conversation_id is not None and get_store().conversation(conversation_id, user_id or "") is None:
+        conversation = None if conversation_id is None else get_store().conversation(conversation_id, user_id or "")
+        if conversation_id is not None and conversation is None:
             log_outcome("conversation_not_found")
             return _error(404, "conversation_not_found", "Conversation not found.", trace_id)
+        if conversation is not None and conversation.mode == "closed":
+            log_outcome("conversation_closed")
+            return _error(409, "conversation_closed", "This Conversation is closed; start a new one.", trace_id)
+        if conversation is not None and conversation.mode in ("waiting_human", "human"):
+            # Taken over (ADR 0006): kept for the Operator; no Agent answers, no Judges.
+            get_store().append_turns(conversation.id, [NewTurn("user", request.message)])
+            log_outcome("queued")
+            return ChatResponse(
+                answer="", mode=conversation.mode, intent=None, agent=None, sources=[], steps=[],
+                trace_id=trace_id, conversation_id=conversation.id,
+            )
         # Prior Turns as context for the Agents (role + text only; account facts come from fresh tool calls).
         history = [] if conversation_id is None else [
             {"role": t.role, "content": t.content} for t in get_store().turns(conversation_id)[-HISTORY_TURNS:]
@@ -364,6 +379,7 @@ def create_app(
             background.add_task(judge, trace_id, request.message, result)
         return ChatResponse(
             answer=result.get("answer", ""),
+            mode="bot",
             intent=intent,
             agent=agent_for(intent, anonymous=user_id is None),
             sources=result.get("sources", []),
@@ -393,9 +409,10 @@ def create_app(
         after: Annotated[int, Query(ge=0, description="Only Turns with a larger id (for polling).")] = 0,
     ):
         """The Conversation's Turns, oldest first; another Merchant's or an unknown id is the same 404 as /chat."""
-        if get_store().conversation(conversation_id, caller.sub) is None:
+        conversation = get_store().conversation(conversation_id, caller.sub)
+        if conversation is None:
             return _error(404, "conversation_not_found", "Conversation not found.", uuid.uuid4().hex)
-        return TurnList(conversation_id=conversation_id, turns=[
+        return TurnList(conversation_id=conversation_id, mode=conversation.mode, turns=[
             TurnOut(id=t.id, role=t.role, content=t.content, intent=t.intent,
                     sources=[Source(url=s["url"], title=s["title"]) for s in t.sources], created_at=t.created_at)
             for t in get_store().turns(conversation_id, after=after)

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 Role = Literal["user", "assistant", "operator"]
-# Human takeover (ADR 0006); only `bot` is used so far.
+# Human takeover (ADR 0006): only `bot` runs the graph.
 Mode = Literal["bot", "waiting_human", "human", "closed"]
 
 SCHEMA = """
@@ -122,6 +122,13 @@ class Store:
             updated_at=datetime.fromisoformat(row["updated_at"]),
             mode=row["mode"],
         )
+
+    def set_mode(self, conversation_id: str, mode: Mode) -> None:
+        """Set the Conversation's Mode and bump `updated_at`. No transition rules here: callers decide (ADR 0006)."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE conversations SET mode = ?, updated_at = ? WHERE id = ?", (mode, self._now(), conversation_id)
+            )
 
     def append_turns(self, conversation_id: str, turns: Sequence[NewTurn]) -> None:
         """Append `turns` in order, in one transaction, and bump the Conversation's `updated_at`."""
