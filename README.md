@@ -53,6 +53,15 @@ Follow the request and Judge log lines in another terminal:
 docker compose logs --tail 0 -f --no-log-prefix api | jq -R 'fromjson? // empty | select(.trace_id)'
 ```
 
+## Login, Conversations and retention
+
+- **Login.** Identity comes only from a verified JWT, never from the request body ([ADR 0005](docs/adr/0005-identity-from-verified-token.md)). In the demo, `POST /dev/login {user_id}` issues one (HS256, 1 hour). It only exists with `DEMO_LOGIN=true`, which compose sets and which is off by default. An invalid or expired token gets 401 and is never treated as anonymous.
+- **Anonymous access.** `/chat` without a token answers product questions (Knowledge Agent) and refuses off-topic ones as usual. Account questions get a fixed bilingual "log in to see your account" reply; the Customer Support Agent never runs. Nothing is stored.
+- **Conversations.** A logged-in Merchant's Messages are kept as Conversations of Turns in SQLite, the single store ([ADR 0004](docs/adr/0004-sqlite-single-store.md)), on the `state` volume, so they survive a restart. Pass back `conversation_id` to continue one. The Router and both specialists see its last 10 Turns. `GET /conversations` and `GET /conversations/{id}/turns` list and read your own; anyone else's is a 404.
+- **Retention.** At startup, Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted with their Turns.
+
+Details are under [Overview](#overview) (Identity, Conversations) and [Privacy](#privacy).
+
 ## Overview
 
 ```
@@ -358,7 +367,7 @@ uv run python -m scripts.eval --save-baseline    # also copy this run over evals
 uv run python -m scripts.eval --retrieval-only   # only recall@4 against the index; no LLM key, no cost
 ```
 
-**What a run does.** Every scenario of [`evals/scenarios.json`](evals/scenarios.json) is run `EVAL_RUNS` times (default 3). Scenarios with a user id pass it straight into graph state (no HTTP); anonymous ones (`"user_id": null`) pass `None`, as `/chat` does without a token, and the Judges are told the visitor is not logged in (the `answer` Judge rates an anonymous `support` reply on asking to log in, not on account Evidence). After each run, the three Judges run synchronously on `JUDGE_MODEL` with the Evidence, and their verdicts are kept.
+**What a run does.** Every scenario of [`evals/scenarios.json`](evals/scenarios.json) is run `EVAL_RUNS` times (default 3). Scenarios with a user id pass it straight into graph state (no HTTP); anonymous ones (`"user_id": null`) pass `None`, as `/chat` does without a token, and the `route` and `answer` Judges are told the visitor is not logged in (the `answer` Judge rates an anonymous `support` reply on asking to log in, not on account Evidence). After each run, the three Judges run synchronously on `JUDGE_MODEL` with the Evidence, and their verdicts are kept.
 
 **What is measured:**
 - **Per scenario:** routing pass rate, fact pass rate (the same checks as `scripts/scenarios.py`), mean and min Judge Score per Judge Type, coverage fields (`fully_answered` rate, `intents_needed`, `missing`), tokens.
@@ -416,7 +425,7 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 - **RAG:** chunking, the title prefix, threshold filtering, collection-name hashing.
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
 - **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, invalid/expired token → 401 (never anonymous), operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
-- **Anonymous visitors:** no token with a fake Router: `support` gets the login reply and the Customer Support node is never called, `knowledge`/`unsupported` as today, `conversation_id` → 401, `{}` → 422, `user_ref` `anonymous`; the Router prompt (scripted fake model) and the Judges are told the visitor is not logged in.
+- **Anonymous visitors:** no token with a fake Router: `support` gets the login reply and the Customer Support node is never called, `knowledge`/`unsupported` as today, `conversation_id` → 401, `{}` → 422, `user_ref` `anonymous`; the Router prompt (scripted fake model) and the `route` and `answer` Judges are told the visitor is not logged in.
 - **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, listing by owner newest first, Turns `after` an id, WAL, reopen the same file after close, retention purge with an injected clock incl. the window edge), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`; a capturing fake graph sees the previous Turns as `history` in order, capped at the last 10, and none for a new Conversation or an anonymous visitor; the purge runs at app startup (default 30 days, `CONVERSATION_RETENTION_DAYS`) and logs only a count. Listing (`tests/test_listing.py`): only the caller's Conversations, newest first; Turns in order with their fields; `after`; another Merchant's/unknown id → the same 404 as `/chat`; no token or invalid token → 401, operator → 403. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
@@ -515,6 +524,7 @@ The README (`11`, `12`) and the video came after the timebox.
 ## Known limitations / future improvements
 
 - **Judges and history:** the Judges see only the current Message, not the Conversation history, so a short follow-up ("It's the Smart one") can get a falsely low route/answer score.
+- **Judges and anonymous visitors:** the `coverage` Judge isn't told the visitor is anonymous (only `route` and `answer` are), so it scores the login reply as unanswered: 0.2 in the ticket 07 live check, 0.2–0.3 for the anonymous eval scenario.
 - **Identity:** the Merchant comes from a verified JWT, but tokens are issued by a demo "log in as" endpoint, not a real identity provider; no refresh or revocation.
 - **Get Clássica:** the Corpus has little on it, so comparing it with Get Smart is weak.
 - **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it.

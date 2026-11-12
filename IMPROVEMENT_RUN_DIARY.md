@@ -39,6 +39,7 @@ Decisions adopted at the start:
 |---|---|---|---|---|---|
 | 1 | 2026-11-10 19:13:42 | 20:45:52 | 1h32m10s | 1h32m10s | `improve-s1-start`, `improve-s1-stop` |
 | 2 | 2026-11-11 19:46:30 | 20:04:49 | 18m19s | 1h50m29s | `improve-s2-start`, `improve-s2-stop` |
+| 3 | 2026-11-11 21:06:46 | 21:58:52 | 52m06s | 2h42m35s | `improve-s3-start`, `improve-s3-stop` |
 
 ## Checkpoints
 
@@ -49,6 +50,9 @@ Decisions adopted at the start:
 | `improve+60m` | `9aa02b2` | 0h53m | Tickets 01, 02 done; 03 implemented (marked done at `f926a78`) |
 | `improve+90m`, `improve-s1-stop` | `d38faf7` | 1h32m | `improvement-fixes` 01–06 done (CI green). Scenarios: routing 13/13, facts 5/7 (ticket 04, 20:20) |
 | `improve-s2-stop` | `f09a1ed` | 1h50m | `eval-expansion` tickets; 01 (shared scenario dataset, 4 Mixed questions) and 02 (coverage Judge) done, CI green. Live check: coverage Judge on 2 Messages (below) |
+| `improve+120m` | `57d8d36` | 1h59m | `conversations-identity` tickets; 01 (token identity) done |
+| `improve+150m` | `e78994c` | 2h16m | `conversations-identity` 01–06 merged; README for retention and Judges without history |
+| `improve-s3-stop` | `2deb383` | 2h43m | 07: live check and eval re-run vs baseline (session 3, below) |
 
 ## Sessions
 
@@ -175,6 +179,9 @@ Done (clock started 21:06:46, tag `improve-s3-start`):
 | 21:30:00 | `d324f00` | 05 merged: list Conversations, read Turns |
 | 21:30:21 | `5b48b6a` | 04 merged: last 10 Turns reach Router and specialists |
 | 21:32:14 | `e78994c` | README: retention at startup only; Judges don't see history |
+| 21:44–21:57 | — | 07: live check and eval re-run (below) |
+| — | `0eb6d6c` | 07: live check, eval vs baseline, diary entry, B2/B3 done |
+| 21:58:52 | `2deb383` | 07: review fixes. **Clock stop** |
 
 #### Live check (ticket 07)
 
@@ -182,7 +189,7 @@ Fresh `docker compose up --build` on `e78994c` with Judges on, healthy at 21:44:
 
 - "My card machine is offline" (trace `fcf5a92671564cab830346e2988aa994`) → `support`, `get_terminal_status`, new Conversation `c4caac36-…`. Judges: route 1.0, coverage 1.0, answer 0.0 (it disliked "yesterday" for 2026-11-11 and the empty Sources).
 - "It is the Smart one" in the same Conversation (trace `62d118cc788f4009b6ea977ac90fd183`) → `support`, answered in context: "Caixa 1 is the Getnet POS Smart (Android)". Judges: route 0.0, answer 0.0, coverage 1.0. The route Judge called the bare follow-up "likely knowledge", which is the known limitation (Judges don't see history).
-- Anonymous "Quanto eu tenho para receber amanhã?" (trace `3d7f90a599664c42970e1f05154656b6`) → `support`, `agent` `router`, steps `router, login`, bilingual login reply, `conversation_id` null, `user_ref` `anonymous`. Live Judges: route 1.0, answer 1.0, coverage 0.2 ("only asks the user to log in"). The live coverage Judge is not told about the anonymous login rule.
+- Anonymous "Quanto eu tenho para receber amanhã?" (trace `3d7f90a599664c42970e1f05154656b6`) → `support`, `agent` `router`, steps `router, login`, bilingual login reply, `conversation_id` null, `user_ref` `anonymous`. Live Judges: route 1.0, answer 1.0, coverage 0.2 ("only asks the user to log in"). The coverage Judge is not told the visitor is anonymous (only route and answer are), live or in the eval: the anonymous eval scenario 19 also scores 0.2–0.3.
 - `docker compose restart` → `retention purge: deleted 0`. after a fresh `/dev/login`, `GET /conversations` still lists `c4caac36-…` with its 4 Turns (ids 5–8, in order). The old token got 401 because `JWT_SECRET` was empty in `.env`, so a new secret was generated. The README Quick start now says this.
 
 #### Eval re-run (ticket 07)
@@ -196,5 +203,9 @@ Ran `uv run python -m scripts.eval` on `e78994c`, 21:45:12–21:56:45. The resul
 - Mixed questions 12/57 = 21%, incomplete 9/12 = 75% (−17pp). The verdict is still **build multi-intent Router**. The coverage Judge agreed with the labelled Mixed scenarios 12/12.
 - recall@4 12/14 = 86%, the same 2 misses. Tokens: 175,915 in total; the mean per scenario run is 3,086 (−53 vs 3,140).
 - No regression attributable to `conversations-identity`. The facts drop is retrieval/LLM variance on a weak Corpus topic.
+
+Checkpoint evals: no separate run at +120m/+150m; the ticket 07 eval re-run (above) is the session's eval.
+
+Off the clock: README section "Login, Conversations and retention", the live coverage Judge limitation, and this clock entry.
 
 Next: `human-takeover` (B4).
