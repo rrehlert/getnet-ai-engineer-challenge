@@ -302,11 +302,7 @@ function anonymousChat() {
 // ---------- role views (filled in by tickets 02 and 03) ----------
 
 // Each view gets (container, claims), renders into the container and may return a cleanup function.
-function merchantView(container, claims) {
-  container.append(el("section", { class: "card" },
-    el("h2", {}, "Merchant view"),
-    el("p", { class: "muted" }, "Logged in as " + claims.sub + ". Conversations and account are coming soon.")));
-}
+// merchantView: app/static/merchant.js (loaded before this file).
 
 function operatorView(container, claims) {
   container.append(el("section", { class: "card" },
