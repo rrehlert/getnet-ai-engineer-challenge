@@ -35,14 +35,20 @@ def run_summary(agent: str, messages: Sequence[BaseMessage]) -> dict:
     }
 
 
+HUMAN_AGENT_PREFIX = "[Human agent]"  # marks an Operator Turn in the Agents' history (ADR 0006)
+
+
 def conversation_messages(state: GraphState) -> list[BaseMessage]:
     """The history (prior Turns, oldest first) as chat messages, then the current Message.
 
     `user` Turns are human messages; `assistant` and `operator` Turns are the
-    assistant's side. Text only: no tool calls or Evidence are replayed.
+    assistant's side, an Operator's prefixed `[Human agent]` so the model knows a
+    human said it. Text only: no tool calls or Evidence are replayed.
     """
     prior: list[BaseMessage] = [
-        HumanMessage(t["content"]) if t["role"] == "user" else AIMessage(t["content"])
+        HumanMessage(t["content"]) if t["role"] == "user"
+        else AIMessage(f"{HUMAN_AGENT_PREFIX} {t['content']}") if t["role"] == "operator"
+        else AIMessage(t["content"])
         for t in state.get("history", [])
     ]
     return [*prior, HumanMessage(state["message"])]
