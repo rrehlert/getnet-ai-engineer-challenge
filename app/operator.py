@@ -16,12 +16,12 @@ from datetime import date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import Principal
 from app.errors import AuthError, error_response
 from app.graph import HISTORY_TURNS, GraphState, Node, Priority, Source, fallback_brief
-from app.store import Conversation, Mode, Role, Store
+from app.store import ActionResult, Conversation, Mode, NewTurn, Role, Store
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +66,22 @@ class ConversationDetail(BaseModel):
     handoff: HandoffOut | None  # the current (latest) Handoff; None for a flagged Conversation never escalated
     account: dict | None  # the Merchant's fixture account; None when there is none
     turns: list[OperatorTurn]
+
+
+# Fixed bilingual `assistant` Turns that tell the polling Merchant (and the bot's history) about a handover.
+HANDBACK_TURN = (
+    "Você está de volta com o assistente virtual. Como posso ajudar? "
+    "You're back with the virtual assistant. How can I help?"
+)
+CLOSE_TURN = (
+    "Esta conversa foi encerrada pelo atendente. Para continuar, inicie uma nova conversa. "
+    "This conversation was closed by the agent. To continue, start a new conversation."
+)
+
+
+class ReplyRequest(BaseModel):
+    content: str = Field(min_length=1)
+    used_suggestion: bool  # the Handoff Brief's suggested reply sent unchanged (audited)
 
 
 def _not_found():
@@ -187,5 +203,40 @@ def operator_router(
             log.warning("brief rewrite unusable on claim conversation_id=%s; keeping the old brief", conversation_id)
             return
         store().replace_brief(handoff.id, dict(brief), latest.id)
+
+    # --- Reply, handback, close (ticket 04) ---
+
+    def act(conversation_id: str, action: Callable[[], ActionResult]):
+        """Run an Operator action on a visible Conversation; 403 when another Operator holds
+        the claim, 409 when the Mode doesn't allow it. Returns the detail view on success."""
+        if store().operator_conversation(conversation_id) is None:
+            return _not_found()
+        result = action()
+        if result == "not_claimer":
+            return error_response(403, "not_claimer", "Another Operator has claimed this Conversation.",
+                                  uuid.uuid4().hex)
+        if result == "wrong_mode":
+            return error_response(409, "wrong_mode", "This action is not allowed in the Conversation's current Mode.",
+                                  uuid.uuid4().hex)
+        return view(store().operator_conversation(conversation_id))
+
+    @router.post("/conversations/{conversation_id}/reply", response_model=ConversationDetail)
+    def reply(conversation_id: str, request: ReplyRequest, caller: Operator):
+        """The claiming Operator's message to the Merchant, stored as an `operator` Turn; `human` Mode only."""
+        return act(conversation_id, lambda: store().reply(
+            conversation_id, caller.sub, NewTurn("operator", request.content), request.used_suggestion))
+
+    @router.post("/conversations/{conversation_id}/handback", response_model=ConversationDetail)
+    def handback(conversation_id: str, caller: Operator):
+        """`human` → `bot` by the claiming Operator; the Merchant sees `HANDBACK_TURN`."""
+        return act(conversation_id, lambda: store().hand_back(
+            conversation_id, caller.sub, NewTurn("assistant", HANDBACK_TURN)))
+
+    @router.post("/conversations/{conversation_id}/close", response_model=ConversationDetail)
+    def close(conversation_id: str, caller: Operator):
+        """→ `closed`: by the claiming Operator in `human`, or by any Operator in `waiting_human`
+        (spam, Merchant gave up; no claim needed). The Merchant sees `CLOSE_TURN`."""
+        return act(conversation_id, lambda: store().close(
+            conversation_id, caller.sub, NewTurn("assistant", CLOSE_TURN)))
 
     return router

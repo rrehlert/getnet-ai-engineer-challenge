@@ -111,6 +111,8 @@ class Handoff:
 
 
 AuditAction = Literal["claim", "reply", "handback", "close", "reviewed"]
+# An Operator action's outcome: done; refused because another Operator holds the claim; or refused by the Mode.
+ActionResult = Literal["done", "not_claimer", "wrong_mode"]
 
 
 @dataclass(frozen=True)
@@ -291,6 +293,63 @@ class Store:
                 )
                 self._audit(conn, operator, "claim", conversation_id, now)
         return won
+
+    # Operator actions in `human` Mode (ADR 0006). Each runs in one transaction: a conditional
+    # update decides (so a racing action can't slip past the check), then its writes and audit row.
+
+    _CLAIMED_BY = (
+        "EXISTS (SELECT 1 FROM handoffs h WHERE h.conversation_id = conversations.id"
+        " AND h.ended_at IS NULL AND h.claimed_by = ?)"
+    )
+
+    @staticmethod
+    def _refused(conn: sqlite3.Connection, conversation_id: str) -> ActionResult:
+        """Why a conditional update changed nothing: another Operator's claim, or the wrong Mode."""
+        row = conn.execute("SELECT mode FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        return "not_claimer" if row is not None and row["mode"] == "human" else "wrong_mode"
+
+    def reply(self, conversation_id: str, operator: str, turn: NewTurn, used_suggestion: bool) -> ActionResult:
+        """Append the claiming Operator's `turn`; only in `human` Mode, only by `operator` holding the claim."""
+        now = self._now()
+        with self._connect() as conn:
+            if conn.execute(
+                f"UPDATE conversations SET updated_at = ? WHERE id = ? AND mode = 'human' AND {self._CLAIMED_BY}",
+                (now, conversation_id, operator),
+            ).rowcount != 1:
+                return self._refused(conn, conversation_id)
+            self._append(conn, conversation_id, [turn], now)
+            self._audit(conn, operator, "reply", conversation_id, now, used_suggestion)
+        return "done"
+
+    def hand_back(self, conversation_id: str, operator: str, turn: NewTurn) -> ActionResult:
+        """`human` → `bot` by the claiming Operator: the Handoff ends `handed_back` and `turn` is appended."""
+        return self._end(conversation_id, operator, "bot", "handed_back", turn,
+                         f"mode = 'human' AND {self._CLAIMED_BY}", (operator,))
+
+    def close(self, conversation_id: str, operator: str, turn: NewTurn) -> ActionResult:
+        """→ `closed`: from `human` by the claiming Operator, or from `waiting_human` by any Operator
+        (no claim needed). The Handoff ends `closed` and `turn` is appended."""
+        return self._end(conversation_id, operator, "closed", "closed", turn,
+                         f"(mode = 'waiting_human' OR (mode = 'human' AND {self._CLAIMED_BY}))", (operator,))
+
+    def _end(
+        self, conversation_id: str, operator: str, mode: Mode, outcome: Literal["handed_back", "closed"],
+        turn: NewTurn, allowed: str, allowed_params: tuple,
+    ) -> ActionResult:
+        now = self._now()
+        with self._connect() as conn:
+            if conn.execute(
+                f"UPDATE conversations SET mode = ?, updated_at = ? WHERE id = ? AND {allowed}",
+                (mode, now, conversation_id, *allowed_params),
+            ).rowcount != 1:
+                return self._refused(conn, conversation_id)
+            conn.execute(
+                "UPDATE handoffs SET outcome = ?, ended_at = ? WHERE conversation_id = ? AND ended_at IS NULL",
+                (outcome, now, conversation_id),
+            )
+            self._append(conn, conversation_id, [turn], now)
+            self._audit(conn, operator, "handback" if outcome == "handed_back" else "close", conversation_id, now)
+        return "done"
 
     def replace_brief(self, handoff_id: int, brief: dict, brief_turn_id: int) -> None:
         """A rewritten Handoff Brief, written from the Turns up to `brief_turn_id`."""

@@ -23,7 +23,7 @@ ALGORITHM = "HS256"
 TOKEN_TTL = timedelta(hours=1)
 
 # Mock operator accounts (role `operator`); every other id logs in as a Merchant.
-OPERATORS = frozenset({"operador1"})
+OPERATORS = frozenset({"operador1", "operador2"})
 
 
 def _utc_now() -> datetime:
