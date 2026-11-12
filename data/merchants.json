@@ -104,5 +104,139 @@
       {"day_offset": -1, "time": "15:12", "terminal": "GT-77C3-0451", "payment_method": "pix", "amount": 54.00, "status": "approved", "authorization_code": "PIX-1B8E30"},
       {"day_offset": 0, "time": "09:15", "terminal": "GT-77C3-0451", "payment_method": "debit", "card_brand": "Elo", "card_last4": "6012", "amount": 39.90, "status": "approved", "authorization_code": "E77M12"}
     ]
+  },
+  "cliente1975": {
+    "profile": {
+      "business_name": "Restaurante Sabor da Serra",
+      "segment": "restaurant",
+      "city": "Belo Horizonte - MG",
+      "settlement_plan": "standard: debit and Pix D+1, credit D+30 (calendar days)",
+      "bank_account": "Banco Itaú, agência 0456, conta ****3380-1",
+      "terminals": 1
+    },
+    "settlements": [
+      {"sale_day_offset": -3, "payment_method": "debit", "transactions": 48, "gross_amount": 2210.00, "fee_amount": 30.28, "net_amount": 2179.72, "expected_day_offset": -2, "status": "paid", "paid_day_offset": -2},
+      {"sale_day_offset": -2, "payment_method": "debit", "transactions": 52, "gross_amount": 2486.70, "fee_amount": 34.07, "net_amount": 2452.63, "expected_day_offset": -1, "status": "failed", "note": "Deposit returned by the receiving bank: the bank account on file (Itaú ****3380-1) is closed. The money stays with Getnet. Only Getnet support staff can update the bank account and re-send this deposit; no new date until then."},
+      {"sale_day_offset": -2, "payment_method": "pix", "transactions": 27, "gross_amount": 640.00, "fee_amount": 3.20, "net_amount": 636.80, "expected_day_offset": -1, "status": "failed", "note": "Deposit returned by the receiving bank: the bank account on file (Itaú ****3380-1) is closed. The money stays with Getnet. Only Getnet support staff can update the bank account and re-send this deposit; no new date until then."},
+      {"sale_day_offset": -1, "payment_method": "debit", "transactions": 55, "gross_amount": 2630.40, "fee_amount": 36.04, "net_amount": 2594.36, "expected_day_offset": 0, "status": "held", "note": "On hold because the previous deposit was returned (bank account closed). Released only after Getnet support staff update the bank account; no release date yet."},
+      {"sale_day_offset": -1, "payment_method": "pix", "transactions": 31, "gross_amount": 712.50, "fee_amount": 3.56, "net_amount": 708.94, "expected_day_offset": 0, "status": "held", "note": "On hold because the previous deposit was returned (bank account closed). Released only after Getnet support staff update the bank account; no release date yet."},
+      {"sale_day_offset": -1, "payment_method": "credit (1x)", "transactions": 29, "gross_amount": 3120.00, "fee_amount": 93.29, "net_amount": 3026.71, "expected_day_offset": 29, "status": "scheduled", "note": "Standard D+30 for credit. Will also be held if the bank account is not updated by then."}
+    ],
+    "terminals": [
+      {
+        "serial": "GT-63D4-0712",
+        "model": "Getnet POS Smart (Android)",
+        "nickname": "Salão",
+        "status": "online",
+        "connection_type": "wifi",
+        "wifi_network": "SaborDaSerra_Clientes",
+        "wifi_signal": "good (3 of 4 bars)",
+        "sim_chip": "TIM data chip installed, mobile data fallback enabled",
+        "last_seen_day_offset": 0,
+        "last_seen_time": "11:42",
+        "battery": "74%",
+        "firmware": "4.12.0 (up to date)",
+        "last_error": null,
+        "troubleshooting_hints": []
+      }
+    ],
+    "transactions": [
+      {"day_offset": -1, "time": "21:47", "terminal": "GT-63D4-0712", "payment_method": "credit (1x)", "card_brand": "Mastercard", "card_last4": "1184", "amount": 186.40, "status": "approved", "authorization_code": "F31R58"},
+      {"day_offset": -1, "time": "20:15", "terminal": "GT-63D4-0712", "payment_method": "debit", "card_brand": "Elo", "card_last4": "6630", "amount": 92.00, "status": "approved", "authorization_code": "G08T19"},
+      {"day_offset": -1, "time": "13:05", "terminal": "GT-63D4-0712", "payment_method": "pix", "amount": 48.50, "status": "approved", "authorization_code": "PIX-3C9D12"},
+      {"day_offset": 0, "time": "11:40", "terminal": "GT-63D4-0712", "payment_method": "debit", "card_brand": "Visa", "card_last4": "2275", "amount": 37.90, "status": "approved", "authorization_code": "H66W03"}
+    ]
+  },
+  "cliente2010": {
+    "profile": {
+      "business_name": "Farmácia Bem Viver",
+      "segment": "pharmacy",
+      "city": "Recife - PE",
+      "settlement_plan": "standard: debit and Pix D+1, credit D+30 (calendar days)",
+      "bank_account": "Caixa Econômica Federal, agência 1520, conta ****7714-0",
+      "terminals": 2
+    },
+    "settlements": [
+      {"sale_day_offset": -2, "payment_method": "debit", "transactions": 44, "gross_amount": 1390.20, "fee_amount": 19.05, "net_amount": 1371.15, "expected_day_offset": -1, "status": "paid", "paid_day_offset": -1},
+      {"sale_day_offset": -1, "payment_method": "debit", "transactions": 26, "gross_amount": 812.60, "fee_amount": 11.13, "net_amount": 801.47, "expected_day_offset": 0, "status": "scheduled", "note": "Credited to the bank account by end of day."},
+      {"sale_day_offset": -1, "payment_method": "pix", "transactions": 19, "gross_amount": 455.00, "fee_amount": 2.28, "net_amount": 452.72, "expected_day_offset": 0, "status": "scheduled", "note": "Credited to the bank account by end of day."}
+    ],
+    "terminals": [
+      {
+        "serial": "GT-91B2-0208",
+        "model": "Getnet POS Smart (Android)",
+        "nickname": "Caixa Principal",
+        "status": "offline",
+        "connection_type": "wifi",
+        "wifi_network": "BemViver_Loja",
+        "wifi_signal": "strong (4 of 4 bars) at last check-in",
+        "sim_chip": "none",
+        "last_seen_day_offset": -1,
+        "last_seen_time": "10:23",
+        "battery": "95% at last check-in",
+        "firmware": "4.12.0 (up to date)",
+        "last_error": "CARD_READER_FAULT: chip and contactless reader not detected; hardware self-test failed, terminal stopped accepting payments",
+        "troubleshooting_hints": [
+          "Restart the terminal once (hold the power button for 10 seconds); the hardware self-test runs at startup.",
+          "If CARD_READER_FAULT appears again after the restart, the card reader is defective and cannot be fixed on site: the terminal must be replaced.",
+          "A replacement terminal can only be requested by Getnet support staff (a person); meanwhile, take payments on the other terminal (Caixa 2) or by Pix."
+        ]
+      },
+      {
+        "serial": "GT-91B2-0231",
+        "model": "Getnet POS Smart (Android)",
+        "nickname": "Caixa 2",
+        "status": "online",
+        "connection_type": "sim_chip",
+        "sim_chip": "Claro data chip, signal good (3 of 4 bars)",
+        "last_seen_day_offset": 0,
+        "last_seen_time": "09:30",
+        "battery": "58%",
+        "firmware": "4.12.0 (up to date)",
+        "last_error": null,
+        "troubleshooting_hints": []
+      }
+    ],
+    "transactions": [
+      {"day_offset": -1, "time": "10:16", "terminal": "GT-91B2-0208", "payment_method": "debit", "card_brand": "Visa", "card_last4": "4802", "amount": 27.30, "status": "approved", "authorization_code": "J14K77"},
+      {"day_offset": -1, "time": "10:21", "terminal": "GT-91B2-0208", "payment_method": "credit (1x)", "card_brand": "Mastercard", "card_last4": "9951", "amount": 64.90, "status": "declined", "decline_code": "TERMINAL_ERROR", "decline_reason": "card reader fault on the terminal", "hint": "Terminal problem, not an issuer decision: the card reader of GT-91B2-0208 failed; use another terminal or Pix."},
+      {"day_offset": -1, "time": "15:44", "terminal": "GT-91B2-0231", "payment_method": "debit", "card_brand": "Elo", "card_last4": "3307", "amount": 41.75, "status": "approved", "authorization_code": "K52N08"},
+      {"day_offset": 0, "time": "09:32", "terminal": "GT-91B2-0231", "payment_method": "pix", "amount": 18.00, "status": "approved", "authorization_code": "PIX-5E4A61"}
+    ]
+  },
+  "cliente2077": {
+    "profile": {
+      "business_name": "Ateliê Linha & Agulha",
+      "segment": "tailoring and alterations",
+      "city": "Florianópolis - SC",
+      "settlement_plan": "standard: debit and Pix D+1, credit D+30 (calendar days)",
+      "bank_account": "Nubank, agência 0001, conta ****2209-5",
+      "terminals": 1
+    },
+    "settlements": [
+      {"sale_day_offset": -3, "payment_method": "pix", "transactions": 1, "gross_amount": 60.00, "fee_amount": 0.30, "net_amount": 59.70, "expected_day_offset": -2, "status": "paid", "paid_day_offset": -2},
+      {"sale_day_offset": -1, "payment_method": "debit", "transactions": 2, "gross_amount": 95.00, "fee_amount": 1.30, "net_amount": 93.70, "expected_day_offset": 0, "status": "scheduled", "note": "Credited to the bank account by end of day."}
+    ],
+    "terminals": [
+      {
+        "serial": "GT-24E7-0034",
+        "model": "Getnet POS Smart (Android)",
+        "nickname": "Balcão",
+        "status": "online",
+        "connection_type": "sim_chip",
+        "sim_chip": "Vivo data chip, signal good (3 of 4 bars)",
+        "last_seen_day_offset": 0,
+        "last_seen_time": "10:05",
+        "battery": "63%",
+        "firmware": "4.12.0 (up to date)",
+        "last_error": null,
+        "troubleshooting_hints": []
+      }
+    ],
+    "transactions": [
+      {"day_offset": -3, "time": "16:20", "terminal": "GT-24E7-0034", "payment_method": "pix", "amount": 60.00, "status": "approved", "authorization_code": "PIX-8A0F44"},
+      {"day_offset": -1, "time": "11:02", "terminal": "GT-24E7-0034", "payment_method": "debit", "card_brand": "Visa", "card_last4": "6148", "amount": 45.00, "status": "approved", "authorization_code": "L09P31"},
+      {"day_offset": -1, "time": "17:36", "terminal": "GT-24E7-0034", "payment_method": "debit", "card_brand": "Mastercard", "card_last4": "8820", "amount": 50.00, "status": "approved", "authorization_code": "M73S26"}
+    ]
   }
 }
