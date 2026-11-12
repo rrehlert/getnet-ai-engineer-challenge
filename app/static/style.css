@@ -162,3 +162,22 @@ textarea { resize: vertical; min-height: 60px; }
 .op-turns .msg.user .author { color: var(--muted); opacity: 1; }
 .op-turns .msg.operator { align-self: flex-end; background: var(--red); color: #fff; border-color: var(--red); }
 .op-turns .msg.operator .author { color: #fff; opacity: 0.85; }
+
+/* Events panel */
+.ev-panel h3 { margin: 0 0 4px; font-size: 0.95rem; }
+.ev-note { margin: 0 0 8px; font-size: 0.8rem; }
+.ev-status { font-size: 0.85rem; }
+.ev-list { display: grid; gap: 2px; max-height: 360px; overflow-y: auto; font-size: 0.8rem; }
+.ev-row { border-bottom: 1px solid var(--line); padding: 3px 0; }
+.ev-row summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.ev-time, .ev-trace { font-family: ui-monospace, monospace; font-size: 0.75rem; }
+.ev-name { font-weight: 600; }
+.ev-level { font-size: 0.7rem; padding: 0 5px; border-radius: 4px; background: var(--page); color: var(--muted); border: 1px solid var(--line); }
+.ev-level-warning .ev-level { background: #fff4d6; color: #7a5a00; border-color: #fff4d6; }
+.ev-level-error .ev-level, .ev-level-critical .ev-level { background: var(--red-tint); color: var(--red-dark); border-color: var(--red-tint); }
+.ev-field { overflow-wrap: anywhere; }
+.ev-key { color: var(--muted); }
+.ev-json {
+  margin: 4px 0 6px; padding: 6px 8px; background: var(--page); border-radius: 6px;
+  font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere;
+}
