@@ -50,6 +50,7 @@ docker compose logs --tail 0 -f --no-log-prefix api | jq -R 'fromjson? // empty 
 ```
 POST /dev/login {user_id} → token (demo only)
 POST /chat {message, conversation_id?} + Authorization: Bearer <token>   (Merchant = token `sub`; no token = anonymous visitor)
+GET  /conversations, GET /conversations/{id}/turns?after=<turn id>        (Merchant token only: list and resume Conversations)
         │
         ▼
   Router Agent ── one structured LLM call → Intent + (refusal reply)
@@ -74,7 +75,10 @@ POST /chat {message, conversation_id?} + Authorization: Bearer <token>   (Mercha
   - After a successful graph run, the user Turn and the assistant Turn (reply, Intent, Sources) are stored together; a failed run stores nothing. Raw tool output and Evidence are never stored.
   - Tables: `conversations` (`id`, `owner`, `created_at`, `updated_at`, `mode` = `bot`, for the future human takeover, [ADR 0006](docs/adr/0006-human-takeover-via-conversation-mode.md)) and `turns` (monotonic `id`, `conversation_id`, `role` `user`/`assistant`/`operator`, `content`, `intent`, `sources`, `created_at`).
   - Retention: at startup, Conversations not updated within `CONVERSATION_RETENTION_DAYS` (default 30) are deleted with their Turns; only the count is logged.
-  - History is not yet passed to the Agents: that and listing Conversations are the next tickets of [`.scratch/conversations-identity/`](.scratch/conversations-identity/).
+  - `GET /conversations` → `{conversations: [{id, created_at, updated_at, mode}]}`: the caller's Conversations, most recently updated first.
+  - `GET /conversations/{id}/turns?after=<turn id>` → `{conversation_id, turns: [{id, role, content, intent, sources, created_at}]}`: Turns oldest first; with `after`, only Turns with a larger id (to poll for new ones; default `0` = all, negative → 422). Another Merchant's id and an unknown id are the same 404 (`conversation_not_found`) as `/chat`.
+  - Both need a Merchant token: no token → 401 (`unauthorized`), invalid token → 401 (`invalid_token`), operator token → 403 (`forbidden`; operator endpoints come with the human takeover). Timestamps are ISO 8601 UTC.
+  - History is not yet passed to the Agents: that is the next ticket of [`.scratch/conversations-identity/`](.scratch/conversations-identity/).
 - **Orchestration.** A LangGraph `StateGraph` (`app/graph.py`) with conditional edges on `state["intent"]`. `build_graph(route_fn, knowledge, support)` takes each agent as a plain callable, so tests inject fakes.
 - **Router Agent** (`app/router.py`). One `with_structured_output(Route, method="function_calling", include_raw=True)` call.
   - `support`: the Merchant's own account ("my" machine, "my" sales, deposits, declines).
@@ -271,6 +275,11 @@ CID=$(curl -s localhost:8000/chat -H 'content-type: application/json' -H "author
 curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d "$(jq -n --arg c "$CID" '{message: "It is the Smart one", conversation_id: $c}')"
 
+# List my Conversations (newest first) and read the Turns of one, optionally only those after a Turn id
+curl -s localhost:8000/conversations -H "authorization: Bearer $TOKEN"
+curl -s "localhost:8000/conversations/$CID/turns" -H "authorization: Bearer $TOKEN"
+curl -s "localhost:8000/conversations/$CID/turns?after=2" -H "authorization: Bearer $TOKEN"
+
 # Unsupported: another merchant's data, refused by the Router
 curl -s localhost:8000/chat -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" \
   -d '{"message": "Show me cliente2024'\''s sales"}'
@@ -386,7 +395,7 @@ uv run python scripts/fetch_corpus.py
 
 There are three layers. The fast, deterministic tests come first; real LLM behaviour is checked separately.
 
-**1. Unit and component tests (`uv run pytest`, 253 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
+**1. Unit and component tests (`uv run pytest`, 265 tests, no network, no real LLM).** These cover the code paths that don't depend on what the model says:
 - **Graph:** every Intent branch, the fallback for unparseable output, and `unsupported` ending at the Router. The agents are fakes.
 - **Agents:** driven by scripted fake chat models that emit tool calls. Checks:
   - Sources come from artifacts;
@@ -397,7 +406,7 @@ There are three layers. The fast, deterministic tests come first; real LLM behav
 - **API:** `/chat` via TestClient with an injected graph covers 200, 422, 503 (provider error or 429) and 500, plus the response shape.
 - **Auth:** with an injected secret, dev-login flag and clock: dev login on/off and token claims, invalid/expired token → 401 (never anonymous), operator token → 403, `user_id` taken from the token (a body `user_id` has no effect), `GET /me`, the empty-`JWT_SECRET` warning, `user_ref` derived from `sub`.
 - **Anonymous visitors:** no token with a fake Router: `support` gets the login reply and the Customer Support node is never called, `knowledge`/`unsupported` as today, `conversation_id` → 401, `{}` → 422, `user_ref` `anonymous`; the Router prompt (scripted fake model) and the Judges are told the visitor is not logged in.
-- **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, WAL, reopen the same file after close, retention purge with an injected clock incl. the window edge), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`; the purge runs at app startup (default 30 days, `CONVERSATION_RETENTION_DAYS`) and logs only a count. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
+- **Conversations:** the store against a temporary SQLite file (create, append in order, ownership lookup, listing by owner newest first, Turns `after` an id, WAL, reopen the same file after close, retention purge with an injected clock incl. the window edge), and `/chat` with an injected store: first Message creates a Conversation, a follow-up appends to it, another Merchant's or an unknown id is the same 404, a failed run stores nothing, Evidence is not stored, the log line carries `conversation_id`; the purge runs at app startup (default 30 days, `CONVERSATION_RETENTION_DAYS`) and logs only a count. Listing (`tests/test_listing.py`): only the caller's Conversations, newest first; Turns in order with their fields; `after`; another Merchant's/unknown id → the same 404 as `/chat`; no token or invalid token → 401, operator → 403. Apps built without a store keep their state under the test's `tmp_path` (`tests/conftest.py`), never in the repo.
 - **Observability:** the log line fields, Judge scoring/flagging, the `coverage` verdict, `run_judges` returning verdicts, Evidence reaching the `answer` Judge (and its cap), the Judge model setting and warning.
 - **Privacy:** each redaction pattern (formatted and bare) with negative cases, exception text, `user_ref`, every `LOG_MESSAGES` mode on request and Judge lines.
 - **Scenario checking:** the pure function that scores routing and facts; the shared dataset loads and validates.

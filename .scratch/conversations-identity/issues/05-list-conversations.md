@@ -8,10 +8,17 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Listing returns only the caller's Conversations, newest first
-- [ ] Turns returned in order with role, content, intent, sources, created_at
-- [ ] `after` filter returns only later Turns
-- [ ] Other Merchant's / unknown id → 404
-- [ ] No token → 401
+- [x] Listing returns only the caller's Conversations, newest first
+- [x] Turns returned in order with role, content, intent, sources, created_at
+- [x] `after` filter returns only later Turns
+- [x] Other Merchant's / unknown id → 404
+- [x] No token → 401
+
+## Comments
+
+- Store: `conversations(owner)` (newest first by `updated_at`, ties by insertion) added at the end of `Store`; `turns(id, after=0)` gained an optional `after` (Turn id > after). Existing callers unchanged.
+- API (after `/chat` in `create_app`): `GET /conversations` → `{conversations: [{id, created_at, updated_at, mode}]}` (`mode` included now for the human takeover); `GET /conversations/{id}/turns?after=` → `{conversation_id, turns: [{id, role, content, intent, sources, created_at}]}`. Unknown/other Merchant's id → same 404 body (`conversation_not_found`) as `/chat`. `after` < 0 → 422.
+- Auth: new `owner` dependency on top of `principal`: no token → 401 `unauthorized`, bad token → 401 `invalid_token`, operator → 403 `forbidden` (per spec: operator endpoints come with human takeover).
+- Tests: `tests/test_listing.py` (HTTP, 10) + 2 Store tests in `tests/test_store.py`. README Overview, examples, Testing strategy updated (260 tests).

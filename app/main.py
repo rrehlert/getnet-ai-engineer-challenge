@@ -4,10 +4,10 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -16,7 +16,7 @@ from app.graph import Agent, Intent, Source, agent_for, build_graph
 from app.judge import run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy, log_request, setup_logging
-from app.store import NewTurn, Store
+from app.store import Mode, NewTurn, Role, Store
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +46,31 @@ class ChatResponse(BaseModel):
     steps: list[str]
     trace_id: str
     conversation_id: str | None = None
+
+
+class ConversationSummary(BaseModel):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    mode: Mode
+
+
+class ConversationList(BaseModel):
+    conversations: list[ConversationSummary]
+
+
+class TurnOut(BaseModel):
+    id: int
+    role: Role
+    content: str
+    intent: str | None
+    sources: list[Source]
+    created_at: datetime
+
+
+class TurnList(BaseModel):
+    conversation_id: str
+    turns: list[TurnOut]
 
 
 def load_default_index():
@@ -342,6 +367,35 @@ def create_app(
             trace_id=trace_id,
             conversation_id=conversation_id,
         )
+
+    def owner(caller: Annotated[Principal, Depends(principal)]) -> Principal:
+        """A Merchant who owns Conversations: 401 without a token, operators 403 (theirs come with takeover)."""
+        if caller.role != "merchant":
+            raise AuthError(403, "forbidden", "Only Merchants have Conversations.")
+        return caller
+
+    @app.get("/conversations", response_model=ConversationList)
+    def list_conversations(caller: Annotated[Principal, Depends(owner)]):
+        """The caller's Conversations, most recently updated first."""
+        return ConversationList(conversations=[
+            ConversationSummary(id=c.id, created_at=c.created_at, updated_at=c.updated_at, mode=c.mode)
+            for c in get_store().conversations(caller.sub)
+        ])
+
+    @app.get("/conversations/{conversation_id}/turns", response_model=TurnList)
+    def list_turns(
+        conversation_id: str,
+        caller: Annotated[Principal, Depends(owner)],
+        after: Annotated[int, Query(ge=0, description="Only Turns with a larger id (for polling).")] = 0,
+    ):
+        """The Conversation's Turns, oldest first; another Merchant's or an unknown id is the same 404 as /chat."""
+        if get_store().conversation(conversation_id, caller.sub) is None:
+            return _error(404, "conversation_not_found", "Conversation not found.", uuid.uuid4().hex)
+        return TurnList(conversation_id=conversation_id, turns=[
+            TurnOut(id=t.id, role=t.role, content=t.content, intent=t.intent,
+                    sources=[Source(url=s["url"], title=s["title"]) for s in t.sources], created_at=t.created_at)
+            for t in get_store().turns(conversation_id, after=after)
+        ])
 
     return app
 
