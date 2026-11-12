@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +14,7 @@ ENV_VARS = [
     "JUDGE_MODEL",
     "RELEVANCE_THRESHOLD",
     "PORT",
-    "CHROMA_DIR",
+    "STATE_DIR",
     "LOG_HASH_KEY",
     "LOG_MESSAGES",
 ]
@@ -37,7 +38,9 @@ def test_defaults_match_spec(clean_env):
     assert settings.judge_model == "openai:anthropic/claude-haiku-5.5"
     assert settings.relevance_threshold == 0.5
     assert settings.port == 8000
-    assert settings.chroma_dir == "chroma"
+    assert settings.state_dir == "state"
+    assert settings.chroma_dir == Path("state/chroma")
+    assert settings.database_path == Path("state/conversations.db")
     assert settings.log_hash_key == ""
     assert settings.log_messages == "redacted"
 

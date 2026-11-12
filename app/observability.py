@@ -6,6 +6,7 @@ import json
 import logging
 import secrets
 import sys
+import uuid
 from dataclasses import dataclass
 from typing import get_args
 
@@ -63,6 +64,15 @@ def emit(event: str, level: int = logging.INFO, *, unredacted: dict | None = Non
     log.log(level, json.dumps(data, ensure_ascii=False, default=str))
 
 
+def _canonical_uuid(value: str | None) -> str | None:
+    """Conversation ids are random UUIDs (the redactor would mask them as Pix keys); any other
+    caller-supplied value is dropped rather than logged."""
+    try:
+        return value if value is not None and str(uuid.UUID(value)) == value else None
+    except ValueError:
+        return None
+
+
 def log_request(
     *,
     privacy: LogPrivacy,
@@ -72,12 +82,13 @@ def log_request(
     latency_ms: int,
     outcome: str,
     result: dict | None = None,
+    conversation_id: str | None = None,
 ) -> None:
     result = result or {}
     intent: Intent | None = result.get("intent")
     emit(
         "request",
-        unredacted=privacy.text_fields(message=message),
+        unredacted={"conversation_id": _canonical_uuid(conversation_id), **privacy.text_fields(message=message)},
         trace_id=trace_id,
         user_ref=ANONYMOUS if user_id is None else privacy.user_ref(user_id),
         intent=intent,

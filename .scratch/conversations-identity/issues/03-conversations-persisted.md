@@ -12,13 +12,23 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] First call creates a Conversation and returns its id; second call with it appends Turns
-- [ ] Another Merchant's id → 404; unknown id → 404 (same response)
-- [ ] Failed graph run stores nothing
-- [ ] Store unit tests: create, append, ownership lookup, reopen same file after close
-- [ ] Log line carries `conversation_id`
-- [ ] Compose uses a single state volume for index + database
-- [ ] Glossary updated
-- [ ] No real LLM calls in tests
+- [x] First call creates a Conversation and returns its id; second call with it appends Turns
+- [x] Another Merchant's id → 404; unknown id → 404 (same response)
+- [x] Failed graph run stores nothing
+- [x] Store unit tests: create, append, ownership lookup, reopen same file after close
+- [x] Log line carries `conversation_id`
+- [x] Compose uses a single state volume for index + database
+- [x] Glossary updated
+- [x] No real LLM calls in tests
+
+## Comments
+
+- Store: `app/store.py`, stdlib `sqlite3`, one short-lived connection per call (threadpool-safe), WAL, `foreign_keys` on, `turns.id` `AUTOINCREMENT` (never reused after a purge, so ticket 05's `after` stays monotonic). Interface: `Store(path, clock=utc_now)`, `create_conversation(owner) -> id`, `conversation(id, owner) -> Conversation | None` (ownership lookup; other owner and missing look the same), `append_turns(id, [NewTurn])` (one transaction, bumps `updated_at`), `turns(id) -> list[Turn]` (no owner check). Timestamps are UTC ISO strings from the injectable clock (for 06's purge).
+- `create_app(store=...)`; default `Store(settings.database_path)` resolved at startup (lifespan) like auth/log privacy.
+- Setting: `STATE_DIR` (default `state`) replaces `CHROMA_DIR`; index at `STATE_DIR/chroma`, database at `STATE_DIR/conversations.db`. Compose volume `state:/app/state` (was `chroma:/app/chroma`); Dockerfile creates `/app/state` owned by `app`. A local `chroma/` from before is no longer used (rebuilt under `state/`).
+- `/chat`: the ownership check runs before the graph (404 `conversation_not_found`, graph not run). The new Conversation is created only after a successful run, then both Turns appended (two transactions; a crash between them would leave an empty Conversation, which 06's retention would purge). Intent is stored on both Turns; Sources on the assistant Turn; Evidence never.
+- Logging: `conversation_id` on the request line is passed unredacted (the redactor masks UUIDs as Pix keys), but only when it is a canonical UUID; any other caller-supplied value is logged as null.
+- Tests: `tests/conftest.py` points `STATE_DIR` at `tmp_path` for every test, so apps built without a store never write into the repo.
+- Verified live in a container (no LLM): `/app/state` holds `chroma/` + `conversations.db`, owned by `app`; unknown `conversation_id` → 404; a Conversation written in the container was still there after `docker restart`. The full two-turn `/chat` flow across a restart was not run live (needs an LLM key; ticket 07).

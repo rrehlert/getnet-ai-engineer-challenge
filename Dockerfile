@@ -7,6 +7,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_NO_DEV=1 \
     PATH="/app/.venv/bin:$PATH" \
     PORT=8000 \
+    STATE_DIR=/app/state \
     FASTEMBED_CACHE_PATH=/opt/fastembed \
     HF_HUB_DISABLE_TELEMETRY=1
 
@@ -24,11 +25,11 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
-# Run as a non-root user. The index dir exists in the image owned by `app`, so a
-# fresh named volume mounted there (docker-compose.yml) inherits that ownership.
+# Run as a non-root user. The state dir (index + database) exists in the image owned
+# by `app`, so a fresh named volume mounted there (docker-compose.yml) inherits that ownership.
 RUN useradd --system --uid 10001 --user-group --no-create-home app \
-    && mkdir -p /app/chroma \
-    && chown app:app /app/chroma \
+    && mkdir -p /app/state \
+    && chown app:app /app/state \
     && chmod -R a+rX "$FASTEMBED_CACHE_PATH"
 USER app
 

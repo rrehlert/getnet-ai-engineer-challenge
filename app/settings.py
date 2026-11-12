@@ -1,5 +1,6 @@
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,8 +26,9 @@ class Settings(BaseSettings):
     judge_model: str = "openai:anthropic/claude-haiku-5.5"
     relevance_threshold: float = 0.5
     port: int = 8000
-    # Persistent Chroma index (gitignored; built at startup, not baked into the image).
-    chroma_dir: str = "chroma"
+    # All persistent state (gitignored): the Corpus index (`chroma/`, built at startup, not baked
+    # into the image) and the Conversations database (`conversations.db`). One volume in compose.
+    state_dir: str = "state"
     # HMAC key for `user_ref` in logs; empty means a random key per process (refs don't match across restarts).
     log_hash_key: str = ""
     log_messages: MessageMode = "redacted"
@@ -34,6 +36,14 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     # Enables `POST /dev/login` ("log in as" any user id). Off by default; compose turns it on.
     demo_login: bool = False
+
+    @property
+    def chroma_dir(self) -> Path:
+        return Path(self.state_dir) / "chroma"
+
+    @property
+    def database_path(self) -> Path:
+        return Path(self.state_dir) / "conversations.db"
 
 
 def warn_if_judge_not_independent(settings: Settings) -> None:

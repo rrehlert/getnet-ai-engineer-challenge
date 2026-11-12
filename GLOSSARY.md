@@ -5,8 +5,16 @@ A support assistant for Getnet merchants. It answers product questions from Getn
 ## Conversation
 
 **Message**:
-One piece of text a Merchant (with their login token) or an Anonymous visitor sends. Handled independently; there is no conversation history.
+One piece of text a Merchant (with their login token, optionally continuing a Conversation) or an Anonymous visitor (always on its own, nothing stored) sends.
 _Avoid_: Query, prompt, request
+
+**Conversation**:
+An ordered series of Turns owned by one Merchant, identified by a random id. A Merchant's first Message starts one; follow-ups name it. Another Merchant's Conversation is indistinguishable from one that doesn't exist.
+_Avoid_: Session, thread, chat
+
+**Turn**:
+One entry in a Conversation: a Message (`user`), its reply (`assistant`), or later a message from an Operator (`operator`). Stores the text, Intent and Sources, never Evidence.
+_Avoid_: Message (that is only the Merchant's side), exchange, entry
 
 **Merchant**:
 A Getnet customer business, identified by a user id (e.g. `cliente1988`), that owns Terminals and receives Settlements. The Merchant is always the one named by the verified login token (its `sub`), never by the request body. Text inside a Message never changes who the Merchant is.

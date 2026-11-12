@@ -10,8 +10,9 @@ services:
       # Demo "log in as" endpoint (POST /dev/login); off by default outside compose.
       DEMO_LOGIN: ${DEMO_LOGIN:-true}
     volumes:
-      # Corpus index survives container recreation (rebuilt only when the corpus changes).
-      - chroma:/app/chroma
+      # All state (STATE_DIR=/app/state): the Corpus index (chroma/, rebuilt only when the corpus
+      # changes) and the Conversations database (conversations.db) survive container recreation.
+      - state:/app/state
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     healthcheck:
@@ -22,4 +23,4 @@ services:
       start_period: 60s
 
 volumes:
-  chroma:
+  state:
