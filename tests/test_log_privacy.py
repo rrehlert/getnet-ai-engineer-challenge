@@ -81,6 +81,15 @@ def formatted(msg, *args, exc_info=None):
     return json.loads(JsonFormatter().format(record))
 
 
+def test_formatted_lines_start_with_utc_time_and_level():
+    record = logging.LogRecord("app.main", logging.INFO, __file__, 1, '{"event": "probe"}', (), None)
+    record.created = 1789214400.25
+
+    line = JsonFormatter().format(record)
+
+    assert line.startswith('{"time": "2026-09-12T12:00:00.250+00:00", "level": "INFO", "event": "probe"')
+
+
 def test_non_event_log_line_is_redacted():
     line = formatted("provider error trace_id=%s: %r", "abc123", ValueError("cpf 123.456.789-09"))
 

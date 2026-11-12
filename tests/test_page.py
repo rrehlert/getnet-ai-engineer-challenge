@@ -33,6 +33,8 @@ def test_root_serves_the_page():
     assert response.text.index('src="/static/merchant.js"') < response.text.index('src="/static/app.js"')
     # The Operator view registers itself in app.js's ROLE_VIEWS, so it must load after it.
     assert response.text.index('src="/static/app.js"') < response.text.index('src="/static/operator.js"')
+    # The events panel registers itself in operator.js's OPERATOR_PANELS.
+    assert response.text.index('src="/static/operator.js"') < response.text.index('src="/static/events.js"')
     assert 'href="/static/style.css"' in response.text
     # Same-origin scripts only: no inline script, no CDN.
     assert "script-src" not in response.headers["content-security-policy"]
@@ -54,7 +56,7 @@ def test_assets_are_served(name):
 def test_every_script_is_loaded_by_the_page():
     page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-    assert {"app.js", "merchant.js", "operator.js"} <= set(SCRIPTS)
+    assert {"app.js", "merchant.js", "operator.js", "events.js"} <= set(SCRIPTS)
     for name in SCRIPTS:
         assert f'<script src="/static/{name}" defer></script>' in page, name
 
