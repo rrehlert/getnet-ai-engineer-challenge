@@ -94,6 +94,7 @@ def test_events_are_this_conversations_traces_oldest_first_with_later_judge_even
     assert all(e.get("conversation_id") in (cid, None) for e in events)
     assert events[2]["judge_score"] == 0.4 and events[2]["level"] == "INFO"
     assert events[0]["intent"] == "knowledge" and events[0]["latency_ms"] == 12
+    assert all(e["time"].endswith("+00:00") for e in events)
 
 
 def test_events_through_chat_include_the_background_judges(store, buffer):

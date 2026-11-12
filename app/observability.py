@@ -10,6 +10,7 @@ import threading
 import uuid
 from collections import deque
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import get_args
 
 from app.graph import LOGIN_STEP, Agent, Intent, agent_for
@@ -105,7 +106,8 @@ def log_request(
 
 
 class JsonFormatter(logging.Formatter):
-    """Event lines (redacted by `emit`) pass through as JSON; other records are redacted and wrapped in a JSON object."""
+    """Event lines (redacted by `emit`) pass through as JSON; other records are redacted and wrapped in a JSON object.
+    Every line starts with `time` (ISO 8601 UTC, milliseconds) and `level`."""
 
     def format(self, record: logging.LogRecord) -> str:
         msg = record.getMessage()
@@ -117,7 +119,8 @@ class JsonFormatter(logging.Formatter):
             data = {"event": "log", "logger": record.name, "message": redact(msg)}
             if record.exc_info:
                 data["exc"] = redact(self.formatException(record.exc_info))
-        return json.dumps({"level": record.levelname, **data}, ensure_ascii=False, default=str)
+        time = datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds")
+        return json.dumps({"time": time, "level": record.levelname, **data}, ensure_ascii=False, default=str)
 
 
 EVENT_BUFFER_SIZE = 2000
