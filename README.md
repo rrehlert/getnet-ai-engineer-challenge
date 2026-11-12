@@ -590,16 +590,17 @@ The README (`11`, `12`) and the video came after the timebox.
 - ~~**Judges and anonymous visitors:** the `coverage` Judge wasn't told the visitor is anonymous, so it scored the login reply as unanswered (0.2–0.3).~~ **Fixed:** it now gets the Merchant line and a rule that, for an anonymous visitor, asking them to log in fully answers a `support` part (live: 0.2 → 1.0).
 - **Identity:** the Merchant comes from a verified JWT, but tokens are issued by a demo "log in as" endpoint, not a real identity provider; no refresh or revocation.
 - **Get Clássica:** the Corpus has little on it, so comparing it with Get Smart is weak.
-- **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it.
+- **Crediário installments:** retrieval sometimes misses the answer even though the Corpus has it. Since the human takeover, the Knowledge Agent sometimes escalates on that miss instead of saying it couldn't find the answer.
 - **Sources:** they can be noisy (every Chunk above the threshold from every search), so filter them to the ones the answer uses.
 - **`steps`:** it counts tool calls that the limit blocked.
 - ~~**Answer Judge vs. web search:** the Judge sees only the answer and the Source URLs/titles, not what the tools returned, and runs on the same model that wrote the reply.~~ **Fixed** in the improvement run: the `answer` Judge now rates the reply against the Evidence (capped tool output), and `JUDGE_MODEL` defaults to a different model family. Remaining: the Judges are not calibrated against human labels.
 - ~~**Semantic quality:** Judge Scores existed only as single log lines, with no aggregate, baseline or repeated runs.~~ **Closed** in the improvement run by the [eval runner](#eval-runner): aggregate Judge Scores per Intent, a committed baseline with deltas, the `coverage` Judge and recall@4.
 - **Multi-intent Router:** the baseline meets the agreed threshold (24% Mixed questions, 92% of them incomplete), so a Router that can hand one Message to both specialists is justified but not built yet.
 - **Chroma:** old hash-named collections are never pruned.
+- **Lint:** ruff isn't a project dependency (run it with `uvx ruff check`), and with its default rules the code has 28 findings that predate the improvement run.
 - **Conversations:** the Agents see only the last 10 Turns (no summary of older ones); whether real models resolve follow-ups well is checked live, not by the eval runner (its scenarios are single Messages with empty history).
 - **Out of scope:** real Getnet APIs, JS-rendered pages, PDF manuals, LangSmith tracing.
 - ~~**Human Escalation Agent (designed, not built).**~~ **Built** in the improvement run: the [Escalator Agent and human takeover](#human-takeover). Not built: an Operator UI (curl only), push delivery (the Merchant polls), routing to Operators by skill, SLAs and notifications, approval-style HITL.
-- **Takeover limits:** `used_suggestion` is reported by the client, not checked against the brief's `suggested_reply`; a brief rewritten on claim doesn't see the original Turn's Evidence (not stored); the `coverage` Judge sees only the transfer message on an escalated Turn, so it can score it low.
+- **Takeover limits:** `used_suggestion` is reported by the client, not checked against the brief's `suggested_reply`; the `suggested_reply` sometimes reads like a transfer note rather than an answer the Operator would send; a brief rewritten on claim doesn't see the original Turn's Evidence (not stored); the `coverage` Judge sees only the transfer message on an escalated Turn, so it can score it low.
 - **Other bonuses (designed, not built):**
   - the dashboards, alerts and golden-set regression runs described in [Evaluation and observability strategy](#evaluation-and-observability-strategy).
