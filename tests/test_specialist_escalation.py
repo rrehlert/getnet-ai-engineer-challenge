@@ -170,3 +170,12 @@ def test_an_escalation_reason_without_a_merchant_ends_with_the_empty_answer_fall
     assert response.json()["answer"] == EMPTY_ANSWER_FALLBACK
     assert response.json()["mode"] == "bot"
     assert escalator.states == []
+
+
+def test_escalation_rule_says_answer_first_and_never_for_partial_answers():
+    """Live check: specialists escalated Mixed questions they could partly answer, discarding the facts."""
+    from app.agents import ESCALATION_RULE
+
+    assert "last resort" in ESCALATION_RULE
+    assert "even in part" in ESCALATION_RULE
+    assert "Escalating discards your answer" in ESCALATION_RULE

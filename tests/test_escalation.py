@@ -320,3 +320,21 @@ def test_retention_purge_removes_the_handoff_with_its_conversation(tmp_path):
     assert store.handoffs(cid) == []
     with closing(sqlite3.connect(tmp_path / "db.sqlite")) as conn:
         assert conn.execute("SELECT COUNT(*) FROM handoffs").fetchone()[0] == 0
+
+
+def test_brief_language_is_decided_before_the_suggested_reply():
+    """The model fills fields in order: `language` first, so the suggested reply follows it
+    (live check: an EN Merchant got a PT suggested reply when `language` came after)."""
+    from app.escalator import PROMPT, EscalatorOutput
+
+    fields = list(EscalatorOutput.model_fields)
+    assert fields.index("language") < fields.index("suggested_reply")
+    assert "written in `language`" in EscalatorOutput.model_fields["suggested_reply"].description
+    assert "written in `language`" in PROMPT
+
+
+def test_transfer_message_avoids_internal_operator_jargon():
+    """Live check: the transfer message said "an Operator" to the Merchant."""
+    from app.escalator import PROMPT
+
+    assert "don't\nuse the internal word \"Operator\" with the Merchant" in PROMPT

@@ -3,8 +3,9 @@ from typing import get_args
 
 import pytest
 
-from app.graph import Intent
+from app.graph import Agent, Intent
 from scripts.scenarios import (
+    AGENTS,
     INTENTS,
     DatasetError,
     Scenario,
@@ -86,6 +87,10 @@ def test_dataset_intents_match_the_graph():
     assert INTENTS == set(get_args(Intent))
 
 
+def test_dataset_agents_match_the_graph():
+    assert AGENTS == set(get_args(Agent))
+
+
 def test_dataset_starts_with_the_original_scenarios():
     scenarios = load_scenarios()
 
@@ -152,7 +157,7 @@ def test_dataset_has_anonymous_product_and_account_scenarios():
 
     anonymous = [s for s in load_scenarios() if s.user_id is None]
 
-    assert {s.intent for s in anonymous} == {"knowledge", "support"}
+    assert {s.intent for s in anonymous} == {"knowledge", "support", "human"}
     [account] = [s for s in anonymous if s.intent == "support"]
     assert account.facts
     assert check_reply({"intent": "support", "answer": LOGIN_REPLY}, account).facts_ok is True
@@ -174,3 +179,24 @@ def test_anonymous_scenarios_send_no_token_and_merchants_log_in_once():
     assert auth_headers(merchant, tokens, login) == {"Authorization": "Bearer token-cliente1988"}
     assert auth_headers(merchant, tokens, login) == {"Authorization": "Bearer token-cliente1988"}
     assert logins == ["cliente1988"]
+
+
+def test_expected_agent_must_match_when_declared():
+    scenario = Scenario("I want a person", "cliente1988", "human", agent="escalator")
+
+    assert check_reply({"intent": "human", "agent": "escalator", "answer": "ok"}, scenario).routing_ok
+    assert not check_reply({"intent": "human", "agent": "router", "answer": "ok"}, scenario).routing_ok
+
+
+def test_unknown_expected_agent_is_rejected():
+    with pytest.raises(DatasetError, match="agent"):
+        parse_scenario({"message": "m", "user_id": None, "intent": "human", "agent": "operator"}, "scenario 1")
+
+
+def test_dataset_has_takeover_scenarios():
+    takeover = [s for s in load_scenarios() if s.intent == "human" or s.agent == "escalator"]
+    by_kind = {(s.user_id is None, s.intent, s.agent) for s in takeover}
+
+    assert (False, "human", "escalator") in by_kind  # explicit request for a person
+    assert (False, "support", "escalator") in by_kind  # specialist Escalation via tool
+    assert (True, "human", "router") in by_kind  # anonymous: login reply

@@ -523,3 +523,35 @@ def test_save_baseline_copies_the_results_file(tmp_path):
 
     assert baseline.read_text(encoding="utf-8") == path.read_text(encoding="utf-8")
     assert "baseline saved" in text
+
+
+def test_eval_checks_the_agent_and_judges_escalations_with_the_brief(tmp_path, monkeypatch):
+    import scripts.eval as eval_module
+
+    path = tmp_path / "scenarios.json"
+    path.write_text(json.dumps({"scenarios": [
+        {"message": "I want to talk to a person", "user_id": "cliente1988", "intent": "human", "agent": "escalator"},
+        {"message": "I want to talk to a person", "user_id": None, "intent": "human", "agent": "router"},
+    ]}))
+    seen = []
+    real = eval_module.run_judges
+
+    def spy(model, **kwargs):
+        seen.append(kwargs)
+        return real(model, **kwargs)
+
+    monkeypatch.setattr(eval_module, "run_judges", spy)
+
+    def human_router(state):
+        return {"intent": "human", "steps": ["router"], "tokens": 1}
+
+    results = json.loads(run_eval(
+        path, graph=build_graph(human_router, knowledge, support), judge_model=judge_model(), runs=1,
+        out_dir=tmp_path / "results", reply_model="r", judge_model_name="j", now=NOW,
+    ).read_text())
+
+    merchant, anonymous = results["runs"]
+    assert merchant["agent"] == "escalator" and merchant["routing_ok"] is True
+    assert anonymous["agent"] == "router" and anonymous["routing_ok"] is True
+    assert seen[0]["handoff"] is not None
+    assert seen[1]["handoff"] is None
