@@ -65,7 +65,8 @@ Everything built so far is reachable only through curl and a shell helper. A rev
 - Anonymous (no token): chat only, no list, no account panel. Each Message is stateless, as on the API.
 
 **Operator view** (role `operator`)
-- Tabs: **Queue** (`GET /operator/queue`, newest first: category, priority, customer_ask, age) and **Review** (`GET /operator/review`, newest first).
+- Tabs: **Queue** (`GET /operator/queue`, newest first: category, priority, customer_ask, age), **Mine** (`GET /operator/mine`: Conversations in `human` whose open Handoff the caller claimed, newest claim first; the Queue's fields plus `claimed_at`) and **Review** (`GET /operator/review`, newest first). A successful Claim switches to Mine.
+- The open Conversation's id is kept in `localStorage` (`demo.operator.open`) and reopened after a reload; forgotten silently if it 404s, and on Logout.
 - Detail (`GET /operator/conversations/{id}`):
   - Turns;
   - Handoff Brief card;
