@@ -454,11 +454,22 @@ class Store:
         ]
 
     def queue(self) -> list[Handoff]:
-        """The open Handoffs of Conversations in `waiting_human`, oldest first (Operator side only)."""
+        """The open Handoffs of Conversations in `waiting_human`, newest first (Operator side only)."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT h.* FROM handoffs h JOIN conversations c ON c.id = h.conversation_id"
-                " WHERE c.mode = 'waiting_human' AND h.ended_at IS NULL ORDER BY h.created_at, h.id"
+                " WHERE c.mode = 'waiting_human' AND h.ended_at IS NULL ORDER BY h.created_at DESC, h.id DESC"
+            ).fetchall()
+        return [_handoff(r) for r in rows]
+
+    def mine(self, operator: str) -> list[Handoff]:
+        """The open Handoffs `operator` claimed, of Conversations in `human`, newest claim first (Operator side only)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT h.* FROM handoffs h JOIN conversations c ON c.id = h.conversation_id"
+                " WHERE c.mode = 'human' AND h.ended_at IS NULL AND h.claimed_by = ?"
+                " ORDER BY h.claimed_at DESC, h.id DESC",
+                (operator,),
             ).fetchall()
         return [_handoff(r) for r in rows]
 

@@ -26,6 +26,11 @@ TOKEN_TTL = timedelta(hours=1)
 OPERATORS = frozenset({"operador1", "operador2"})
 
 
+def role_for(sub: str) -> Role:
+    """The role a dev-login token for `sub` carries."""
+    return "operator" if sub in OPERATORS else "merchant"
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -56,7 +61,7 @@ class AuthSettings:
 
     def issue(self, sub: str) -> str:
         """A signed token for `sub`, with its role and a 1 hour expiry."""
-        role: Role = "operator" if sub in OPERATORS else "merchant"
+        role = role_for(sub)
         exp = self.clock() + TOKEN_TTL
         return jwt.encode({"sub": sub, "role": role, "exp": int(exp.timestamp())}, self.secret, ALGORITHM)
 

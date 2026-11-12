@@ -34,6 +34,7 @@ def escalated(store, owner="cliente1988", message="quero falar com uma pessoa", 
 
 @pytest.mark.parametrize(("method", "path"), [
     ("get", "/operator/queue"),
+    ("get", "/operator/mine"),
     ("get", "/operator/conversations/some-id"),
     ("post", "/operator/conversations/some-id/claim"),
 ])
@@ -51,7 +52,7 @@ def test_operator_endpoints_need_a_token_and_the_operator_role(store, method, pa
 # Queue
 
 
-def test_queue_lists_waiting_conversations_oldest_first_with_the_brief_fields(tmp_path):
+def test_queue_lists_waiting_conversations_newest_first_with_the_brief_fields(tmp_path):
     from datetime import datetime, timedelta
 
     from tests.test_store import T0, Clock
@@ -74,11 +75,11 @@ def test_queue_lists_waiting_conversations_oldest_first_with_the_brief_fields(tm
 
     assert response.status_code == 200
     items = response.json()["conversations"]
-    assert [i["conversation_id"] for i in items] == [oldest, newer]
-    assert [datetime.fromisoformat(i["created_at"]) for i in items] == [T0 - timedelta(minutes=10), T0 - timedelta(minutes=5)]
+    assert [i["conversation_id"] for i in items] == [newer, oldest]
+    assert [datetime.fromisoformat(i["created_at"]) for i in items] == [T0 - timedelta(minutes=5), T0 - timedelta(minutes=10)]
     assert [(i["category"], i["priority"], i["customer_ask"]) for i in items] == [
-        ("terminal", "high", BRIEF["customer_ask"]),
         ("transaction", "normal", "Contestar um chargeback"),
+        ("terminal", "high", BRIEF["customer_ask"]),
     ]
 
 
@@ -244,6 +245,60 @@ def test_an_unparseable_brief_rewrite_keeps_the_old_brief(store):
     body = claim(client_for(store, escalator=fallback_escalator), cid).json()
 
     assert body["handoff"]["brief"] == BRIEF
+
+
+# Mine
+
+
+def test_mine_lists_only_my_claimed_human_conversations_newest_claim_first(tmp_path):
+    from datetime import datetime, timedelta
+
+    from tests.test_store import T0, Clock
+
+    clock = Clock()
+    store = Store(tmp_path / "db.sqlite", clock=clock)
+    chargeback = {**BRIEF, "customer_ask": "Contestar um chargeback", "category": "transaction", "priority": "normal"}
+    clock.now = T0 - timedelta(minutes=30)
+    first = escalated(store, owner="cliente2024", brief=chargeback)  # escalated first, claimed last
+    second = escalated(store)
+    others = escalated(store)
+    waiting = escalated(store)
+    handed_back = escalated(store)
+    closed = escalated(store)
+    clock.now = T0 - timedelta(minutes=20)
+    store.claim(second, OPERATOR)
+    store.claim(others, "operador2")
+    store.claim(handed_back, OPERATOR)
+    store.claim(closed, OPERATOR)
+    store.hand_back(handed_back, OPERATOR, NewTurn("assistant", "back"))
+    store.close(closed, OPERATOR, NewTurn("assistant", "closed"))
+    clock.now = T0 - timedelta(minutes=10)
+    store.claim(first, OPERATOR)
+    clock.now = T0
+    client = client_for(store)
+
+    response = client.get("/operator/mine", headers=as_operator(client))
+
+    assert response.status_code == 200
+    items = response.json()["conversations"]
+    assert [i["conversation_id"] for i in items] == [first, second]
+    assert waiting not in [i["conversation_id"] for i in items]
+    assert [datetime.fromisoformat(i["claimed_at"]) for i in items] == [T0 - timedelta(minutes=10), T0 - timedelta(minutes=20)]
+    assert [datetime.fromisoformat(i["created_at"]) for i in items] == [T0 - timedelta(minutes=30)] * 2
+    assert (items[0]["category"], items[0]["priority"], items[0]["customer_ask"]) == (
+        "transaction", "normal", "Contestar um chargeback")
+    other = client.get("/operator/mine", headers=as_operator(client, "operador2")).json()["conversations"]
+    assert [i["conversation_id"] for i in other] == [others]
+
+
+def test_mine_is_empty_after_a_claim_is_handed_back_and_the_conversation_escalates_again(store):
+    cid = escalated(store)
+    store.claim(cid, OPERATOR)
+    store.hand_back(cid, OPERATOR, NewTurn("assistant", "back"))
+    store.escalate(cid, "cliente1988", [NewTurn("user", "pessoa de novo", intent="human")], BRIEF)
+    client = client_for(store)
+
+    assert client.get("/operator/mine", headers=as_operator(client)).json()["conversations"] == []
 
 
 # Claim

@@ -24,7 +24,7 @@ Order: **A. Fixes → B. Core → C. QoL/extras**. One spec per feature under `.
 | `eval-expansion` | B1. Coverage judge, mixed-question scenarios, multiple runs + baseline, retrieval recall@k |
 | `conversations-identity` | B2 + B3. SQLite persistence, multi-turn memory with ownership, dev login + JWT, roles. **Done** (session 3) |
 | `human-takeover` | B4. Human takeover of conversations, Escalator agent, operator API, audit. **Done** (sessions 4–5) |
-| `demo-clients` | C. Merchant and operator frontends, more mock data, CLI helper, SSE |
+| `demo-clients` | C1–C3. Merchant and Operator frontends (one static page), live events panel, more mock data. **Done** (session 5). CLI helper (C4) dropped, SSE (C5) out |
 | `multi-intent-router` | B5. Only if coverage data shows enough mixed questions answered incompletely |
 
 Decisions adopted at the start:
@@ -41,6 +41,7 @@ Decisions adopted at the start:
 | 2 | 2026-11-11 19:46:30 | 20:04:49 | 18m19s | 1h50m29s | `improve-s2-start`, `improve-s2-stop` |
 | 3 | 2026-11-11 21:06:46 | 21:58:52 | 52m06s | 2h42m35s | `improve-s3-start`, `improve-s3-stop` |
 | 4 | 2026-11-11 22:22:54 | 23:05:33 | 42m39s | 3h25m14s | `improve-s4-start`, `improve-s4-stop` |
+| 5 | 2026-11-12 16:10:45 | 18:54:35 | 1h51m59s (pause 17:23:09–18:15:00) | 5h17m13s | `improve-s5-start`, `improve-s5-stop` |
 
 ## Checkpoints
 
@@ -57,6 +58,10 @@ Decisions adopted at the start:
 | `improve+180m` | `4306808` | 3h00m | `human-takeover` 01 (`/chat` by Mode), 02 (Intent `human`, Escalator Agent, Handoffs) merged |
 | `improve-s4-stop` | `6a07d75` | 3h25m | `human-takeover` 01–06 merged, code review fixes, implementation report; 07 pending |
 | `improve+210m` | `7a8d142` | 3h30m | 07 live check done (both paths); fixes: suggested_reply language, transfer-message wording |
+| `improve+240m` | `4bedc49` | 4h00m | `human-takeover` 07 done (eval re-run, README); `demo-clients` grilling under way |
+| `improve+270m` | `724edff` | 4h30m | `demo-clients` spec + tickets; 01 (page, login, anonymous chat), 05 (mock Merchants), 02 (Merchant view) merged |
+| `improve+300m` | `7da46a9` | 5h00m | 03 (Operator view), 04 (events panel) merged; first live-review fixes |
+| `improve-s5-stop` | `e53498e` | 5h17m | Operator Mine tab; live two-window walkthrough done (below) |
 
 ## Sessions
 
@@ -240,7 +245,7 @@ Done (clock started 22:22:54, tag `improve-s4-start`):
 
 ### Session 5 — 2026-11-12
 
-Goal: `human-takeover` ticket 07: live check, eval scenarios and re-run, README.
+Goal: `human-takeover` ticket 07: live check, eval scenarios and re-run, README. Then `demo-clients` (C1–C3): grilling, spec, tickets 01–06.
 
 Done (clock started 16:10:45, tag `improve-s5-start`):
 
@@ -300,3 +305,38 @@ Open:
 - Knowledge escalates on retrieval misses.
 - Ruff isn't a dev dependency, and `main` has 28 errors.
 
+#### Demo clients (session 5, continued)
+
+Grilling while the other session finished 07; spec `.scratch/demo-clients/spec.md`, written before 07 was merged, tickets after. Decisions: one static page (vanilla JS, no build, no CDN, Getnet red `#ec0000` from getnet.com.br's CSS, no logo), view by token role, token in `localStorage` (demo = private window for the Merchant, normal one for the Operator), `/dev/users` for the login dropdown, English labels, polling not SSE, CLI helper dropped, more mock Merchants as an independent ticket. Events view: in-memory ring buffer, not a table (below). No new Glossary terms or ADRs.
+
+Implementer subagents, one per ticket in its own worktree, merged `--no-ff` into `demo-clients`:
+
+| Time | Commit | What |
+|---|---|---|
+| 17:04:00 | `3e15213` | Spec + tickets 01–06 (on `main`) |
+| 17:07:58 | `8135891` | 01 merged: page at `/` (CSP `default-src 'self'`), `/dev/users`, login/session panel, anonymous chat, HTML-sink test |
+| 17:07:58 | `5dfa5aa` | 05 merged: `cliente1975` (returned/held deposits, closed bank account), `cliente2010` (card reader fault), `cliente2077` (quiet); originals byte-identical (test) |
+| 17:14:10 | `724edff` | 02 merged: Merchant view |
+| 17:16:39 | `fc4263a` | 03 merged: Operator view (conflicts in `style.css` and `tests/test_page.py` resolved; placeholder removed) |
+| 17:23:09 | `5752585` | 04 merged: events ring buffer, `GET /operator/conversations/{id}/events`, events panel; log lines gain `time` |
+| 17:23:09–18:15:00 | — | **Pause** |
+| 18:36:42 | `7da46a9` | Live-review fixes: `nobody` removed from the demo users (ambiguous with anonymous), "Agent" → "Operator" in the page (agent reads as AI agent), Queue newest first (API, test, specs), `cliente1975` notes no longer say "only Getnet staff" (the bot escalated the first question and the Merchant got no explanation) |
+| 18:47:53 | `e53498e` | Operator **Mine** tab (`GET /operator/mine`), open Conversation kept across reloads: after a claim, a reload lost the Conversation |
+| 18:54:35 | — | **Clock stop** (tag `improve-s5-stop`) |
+
+- Tests 377 → 431, all fakes. Each view was also checked in headless Chrome (puppeteer) against a fake graph, not part of the suite: Merchant view, Operator view (30 checks, re-run after the merge), events panel, Mine tab.
+- Events buffer: the last 2000 log lines, the same redacted JSON as stdout, so stdout stays the source of record. Known limits, accepted for the demo: lost on restart; per process, so single instance only; bounded, so older events drop out. Plain-text warnings have no `trace_id` and don't show.
+- The demo database held 4 waiting and ~24 flagged Conversations from 07's live smoke (`cliente1988`), which made the Queue look mocked. `conversations.db` was deleted (Corpus index kept); README now says to run `scripts/scenarios.py` against a throwaway stack, and how to reset.
+
+Live walkthrough (stack from `demo-clients`, real models, Judges on; private window for the Merchant, normal one for `operador1`):
+- Anonymous: product question answered with Sources; "Preciso trocar minha conta bancária…" without a token (`012b0fc62b3045518f969bcf6fa100fb`) → login reply, nothing stored.
+- Handback path (`23a02cb0-…`, `cliente1975`): "Meu depósito de ontem não caiu…" answered from the account after the fixture fix; "Preciso trocar minha conta bancária…" escalated → Queue → claim → Mine → suggested reply sent unchanged (`used_suggestion` 1), an edited reply (0) → shown to the Merchant as "Operator" → handback → bot again. "finalizar conversa" (`9c4ad4d0ccdc499e9deb095943f91bc5`) → `unsupported` (Merchants can't close; out of scope).
+- Close path (`e2d8bb2e-…`, `cliente2010`): "Minha maquininha do caixa principal parou de aceitar cartão" (`0f3fe890ea6a44da8ceab7aa421ef4b6`, answer Judge 0.0 → Review flag) → "Já reiniciei e continua o erro…" (`86229f9a1b354200ad3d1a8724fc79f3`) → `escalator` → claim, reply, close → Merchant read-only.
+- Events panel showed the request and Judge lines arriving after each reply; Review tab listed the flagged Conversation; Mark reviewed cleared it.
+- Audit: claim, reply ×2, handback, claim, reply, close; no content.
+
+Open:
+- Escalating discards the specialist's explanation (the Merchant only gets the transfer message).
+- Merchants can't close a Conversation.
+- Empty `JWT_SECRET` logs everyone out on each rebuild.
+- `b18af58` fails on its own (its test needs the next commit); left, no history rewrite.
