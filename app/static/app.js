@@ -231,7 +231,7 @@ function errorLine(text) {
 
 // ---------- chat building blocks (reused by the Merchant view, 02) ----------
 
-const AUTHORS = { user: "You", assistant: "Assistant", operator: "Agent" };
+const AUTHORS = { user: "You", assistant: "Assistant", operator: "Operator" };
 
 // One message bubble. `sources`: [{title, url}], shown collapsed under an answer.
 function messageNode(role, text, sources) {

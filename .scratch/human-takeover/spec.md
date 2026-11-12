@@ -88,7 +88,7 @@ A human picking up a case cold would need to re-read everything and re-ask quest
 
 **Operator API** (role `operator` required, else 403)
 - Visibility: Operators see only Conversations that had a Handoff or carry a Review flag; any other id → 404. Reads are not audited.
-- `GET /operator/queue`: Conversations in `waiting_human`, oldest first, with brief summary fields (category, priority, customer_ask, created at).
+- `GET /operator/queue`: Conversations in `waiting_human`, newest first (changed from oldest first in the demo-clients review), with brief summary fields (category, priority, customer_ask, created at).
 - `GET /operator/review`: Conversations with a Review flag (any Mode), newest first.
 - `GET /operator/conversations/{id}`: Turns, current Handoff Brief, Mode, claim, Review flag, and the Merchant's account data from the fixture (`load_merchants(today).get(owner)`, resolved by software, never by the model).
 - `POST /operator/conversations/{id}/claim`: `waiting_human` → `human`, records the claiming Operator; already claimed or wrong Mode → 409.

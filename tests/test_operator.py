@@ -51,7 +51,7 @@ def test_operator_endpoints_need_a_token_and_the_operator_role(store, method, pa
 # Queue
 
 
-def test_queue_lists_waiting_conversations_oldest_first_with_the_brief_fields(tmp_path):
+def test_queue_lists_waiting_conversations_newest_first_with_the_brief_fields(tmp_path):
     from datetime import datetime, timedelta
 
     from tests.test_store import T0, Clock
@@ -74,11 +74,11 @@ def test_queue_lists_waiting_conversations_oldest_first_with_the_brief_fields(tm
 
     assert response.status_code == 200
     items = response.json()["conversations"]
-    assert [i["conversation_id"] for i in items] == [oldest, newer]
-    assert [datetime.fromisoformat(i["created_at"]) for i in items] == [T0 - timedelta(minutes=10), T0 - timedelta(minutes=5)]
+    assert [i["conversation_id"] for i in items] == [newer, oldest]
+    assert [datetime.fromisoformat(i["created_at"]) for i in items] == [T0 - timedelta(minutes=5), T0 - timedelta(minutes=10)]
     assert [(i["category"], i["priority"], i["customer_ask"]) for i in items] == [
-        ("terminal", "high", BRIEF["customer_ask"]),
         ("transaction", "normal", "Contestar um chargeback"),
+        ("terminal", "high", BRIEF["customer_ask"]),
     ]
 
 

@@ -30,8 +30,6 @@ log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 # Only what the page needs from its own origin: no inline script, no third party.
 PAGE_CSP = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-# A fixed id with no fixture account, so the demo can show "account not found".
-UNKNOWN_DEMO_USER = "nobody"
 
 
 class ChatRequest(BaseModel):
@@ -335,10 +333,10 @@ def create_app(
 
     @app.get("/dev/users", response_model=DevUsers, dependencies=[Depends(demo_login_enabled)])
     def dev_users():
-        """Who the demo can log in as: fixture Merchants, mock Operators and one unknown id."""
+        """Who the demo can log in as: fixture Merchants and mock Operators."""
         from app.support import load_merchants
 
-        ids = [*load_merchants(get_auth().clock().date()), *sorted(OPERATORS), UNKNOWN_DEMO_USER]
+        ids = [*load_merchants(get_auth().clock().date()), *sorted(OPERATORS)]
         return DevUsers(users=[DevUser(id=i, role=role_for(i)) for i in ids])
 
     @app.get("/", include_in_schema=False)
