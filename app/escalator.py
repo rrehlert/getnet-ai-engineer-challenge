@@ -52,8 +52,8 @@ Brief rules:
   (the Merchant's language, not the language of these instructions).
 
 `transfer_message`: one or two sentences, in the SAME language as the Merchant's
-latest Message, saying they are being transferred to a person (an Operator) and can keep
-writing while they wait. """ + LANGUAGE_RULE
+latest Message, saying they are being transferred to a person (a human attendant; don't
+use the internal word "Operator" with the Merchant) and can keep writing while they wait. """ + LANGUAGE_RULE
 
 
 class EscalatorOutput(BaseModel):
