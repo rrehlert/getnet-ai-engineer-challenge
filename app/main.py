@@ -15,7 +15,7 @@ from app.auth import AuthSettings, InvalidToken, Principal
 from app.errors import AuthError
 from app.errors import error_response as _error
 from app.graph import HISTORY_TURNS, Agent, Intent, Node, Source, agent_for, build_graph
-from app.judge import run_judges
+from app.judge import FLAG_BELOW, run_judges
 from app.llm import is_provider_error, provider_error_code
 from app.observability import LogPrivacy, log_request, setup_logging
 from app.operator import operator_router
@@ -262,13 +262,18 @@ def create_app(
             app.state.judge_model = make_chat_model(settings, settings.judge_model)
         return app.state.judge_model
 
-    def judge(trace_id: str, message: str, result: dict) -> None:
+    def judge(
+        trace_id: str, message: str, result: dict, history: list[dict],
+        brief: dict | None, conversation_id: str | None,
+    ) -> None:
+        """Runs after the reply is sent. `brief`: the Handoff Brief of an escalated Turn.
+        `conversation_id`: where a low `answer` Score sets the Review flag (None for anonymous)."""
         try:
             model = get_judge_model()
         except Exception:
             log.exception("judge model unavailable trace_id=%s", trace_id)
             return
-        run_judges(
+        verdicts = run_judges(
             model,
             privacy=get_log_privacy(),
             trace_id=trace_id,
@@ -278,7 +283,17 @@ def create_app(
             sources=result.get("sources", []),
             evidence=result.get("evidence", []),
             user_id=result.get("user_id", ""),
+            # An escalated Turn: the brief is judged (stored, never logged) against the Conversation.
+            handoff=brief,
+            history=history,
         )
+        answer = verdicts.get("answer")
+        # Only the `answer` Score flags; never a Mode change, never blocks the Merchant (ADR 0006).
+        if conversation_id is not None and answer is not None and answer.score < FLAG_BELOW:
+            try:
+                get_store().flag_for_review(conversation_id)
+            except Exception:
+                log.exception("review flag not set trace_id=%s", trace_id)
 
     def ready() -> bool:
         return not app.state.needs_index or app.state.index is not None
@@ -389,7 +404,10 @@ def create_app(
                 get_store().append_turns(conversation_id, turns)
         log_outcome("ok", result)
         if judges_on():
-            background.add_task(judge, trace_id, request.message, result)
+            background.add_task(
+                judge, trace_id, request.message, result, history, brief,
+                None if user_id is None else conversation_id,
+            )
         return ChatResponse(
             answer=result.get("answer", ""),
             mode="bot" if brief is None else "waiting_human",
