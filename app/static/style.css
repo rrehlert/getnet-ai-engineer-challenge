@@ -70,3 +70,35 @@ textarea { resize: vertical; min-height: 60px; }
 .sources a { color: var(--red-dark); }
 .composer { display: flex; gap: 8px; align-items: flex-end; border-top: 1px solid var(--line); padding-top: 12px; }
 .composer textarea { flex: 1; }
+
+/* Merchant view */
+@media (min-width: 800px) { .main.merchant { grid-template-columns: 320px 1fr; align-items: start; } }
+.merchant-side { display: grid; gap: 16px; min-width: 0; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.card-head h2 { margin: 0; }
+.conv-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.conv-item {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; font: inherit; font-size: 0.9rem; text-align: left; cursor: pointer;
+  color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+}
+.conv-item:hover { background: var(--page); }
+.conv-item.active { border-color: var(--red); background: var(--red-tint); }
+.badge.mode-bot { background: var(--page); color: var(--muted); }
+.badge.mode-waiting_human { background: #fff4d6; color: #8a5a00; }
+.badge.mode-human { background: var(--red-tint); color: var(--red-dark); }
+.badge.mode-closed { background: var(--line); color: var(--muted); }
+.mode-banner { padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; font-weight: 600; font-size: 0.9rem; }
+.mode-banner.mode-waiting_human { background: #fff4d6; color: #8a5a00; }
+.mode-banner.mode-human { background: var(--red-tint); color: var(--red-dark); }
+.mode-banner.mode-closed { background: var(--line); color: var(--muted); }
+.msg.unsent { opacity: 0.6; }
+.closed-actions { border-top: 1px solid var(--line); padding-top: 12px; }
+.account summary { cursor: pointer; list-style-position: inside; }
+.account summary h2 { display: inline; margin: 0; }
+.account h3 { font-size: 0.85rem; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 0; font-size: 0.85rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.account-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 0.9rem; }
+.account-list .muted { font-size: 0.8rem; }
