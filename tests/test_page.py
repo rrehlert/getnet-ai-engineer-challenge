@@ -13,7 +13,7 @@ from app.support import load_merchants
 
 SECRET = "test-secret-at-least-32-bytes-long"
 NOW = datetime(2026, 11, 11, 12, 0, tzinfo=UTC)
-APP_JS = STATIC_DIR / "app.js"
+SCRIPTS = sorted(STATIC_DIR.glob("*.js"))
 
 
 def make_app(demo_login=True):
@@ -28,6 +28,8 @@ def test_root_serves_the_page():
     assert response.headers["content-type"].startswith("text/html")
     assert "<title>Merchant Support (demo)</title>" in response.text
     assert 'src="/static/app.js"' in response.text
+    # The Operator view registers itself in app.js's ROLE_VIEWS, so it must load after it.
+    assert response.text.index('src="/static/app.js"') < response.text.index('src="/static/operator.js"')
     assert 'href="/static/style.css"' in response.text
     # Same-origin scripts only: no inline script, no CDN.
     assert "script-src" not in response.headers["content-security-policy"]
@@ -36,6 +38,7 @@ def test_root_serves_the_page():
 
 @pytest.mark.parametrize(("path", "content_type"), [
     ("/static/app.js", "javascript"),
+    ("/static/operator.js", "javascript"),
     ("/static/style.css", "text/css"),
 ])
 def test_assets_are_served(path, content_type):
@@ -54,7 +57,7 @@ def test_page_works_without_demo_login():
 
 
 def test_page_loads_nothing_from_other_origins():
-    for name in ("index.html", "app.js", "style.css"):
+    for name in ("index.html", "style.css", *(p.name for p in SCRIPTS)):
         text = (STATIC_DIR / name).read_text(encoding="utf-8")
         assert not re.search(r"""(src|href)\s*=\s*["']?(https?:)?//""", text), name
         assert "@import" not in text, name
@@ -113,8 +116,9 @@ def html_sink_violations(source: str) -> list[str]:
     return bad
 
 
-def test_app_js_writes_no_html_from_dynamic_values():
-    assert html_sink_violations(APP_JS.read_text(encoding="utf-8")) == []
+@pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
+def test_scripts_write_no_html_from_dynamic_values(script):
+    assert html_sink_violations(script.read_text(encoding="utf-8")) == []
 
 
 @pytest.mark.parametrize("line", [
